@@ -2,6 +2,8 @@
  * Metrics Collector
  * 
  * Collects job-level metrics from the GitHub Actions environment
+ * following OpenTelemetry CI/CD Semantic Conventions:
+ * https://opentelemetry.io/docs/specs/semconv/registry/attributes/cicd/
  */
 
 import * as core from '@actions/core';
@@ -18,15 +20,7 @@ type WorkflowJob = {
 export async function collectMetrics(token: string): Promise<JobMetrics> {
   const metrics: JobMetrics = {};
   
-  // Get job start time from environment
-  const jobStartedAt = process.env.GITHUB_JOB_STARTED_AT;
-  if (jobStartedAt) {
-    const startTime = new Date(jobStartedAt).getTime();
-    const now = Date.now();
-    metrics.workflowDuration = (now - startTime) / 1000;
-  }
-  
-  // Try to get more metrics from the API
+  // Try to get metrics from the GitHub API
   if (token) {
     try {
       const octokit = github.getOctokit(token);
@@ -40,31 +34,32 @@ export async function collectMetrics(token: string): Promise<JobMetrics> {
         run_id: runId,
       });
       
+      // cicd.pipeline.run.duration - Total pipeline run duration
       if (run.created_at && run.updated_at) {
         const created = new Date(run.created_at).getTime();
         const updated = new Date(run.updated_at).getTime();
-        metrics.workflowDuration = (updated - created) / 1000;
+        metrics['cicd.pipeline.run.duration'] = (updated - created) / 1000;
       }
       
-      // Calculate queue time if we have run_started_at
+      // cicd.pipeline.run.queue_time - Time spent in queue before execution
       if (run.created_at && run.run_started_at) {
         const created = new Date(run.created_at).getTime();
         const started = new Date(run.run_started_at).getTime();
-        metrics.queueTime = (started - created) / 1000;
+        metrics['cicd.pipeline.run.queue_time'] = (started - created) / 1000;
       }
       
-      // Get job details
+      // Get job details for task-level metrics
       const { data: jobs } = await octokit.rest.actions.listJobsForWorkflowRun({
         owner,
         repo,
         run_id: runId,
       });
       
-      // Find current job
+      // Find current job and get cicd.pipeline.task.run.duration
       const currentJob = jobs.jobs.find((j: WorkflowJob) => j.name === github.context.job);
       if (currentJob && currentJob.started_at) {
         const jobStart = new Date(currentJob.started_at).getTime();
-        metrics.actionDuration = (Date.now() - jobStart) / 1000;
+        metrics['cicd.pipeline.task.run.duration'] = (Date.now() - jobStart) / 1000;
       }
       
     } catch (error) {
@@ -72,9 +67,10 @@ export async function collectMetrics(token: string): Promise<JobMetrics> {
     }
   }
   
-  // Add runner info
-  metrics.runnerOs = process.env.RUNNER_OS || 'unknown';
-  metrics.runnerArch = process.env.RUNNER_ARCH || 'unknown';
+  // Add worker info using semantic conventions
+  metrics['cicd.worker.name'] = process.env.RUNNER_NAME || 'unknown';
+  metrics['cicd.worker.os'] = process.env.RUNNER_OS || 'unknown';
+  metrics['cicd.worker.arch'] = process.env.RUNNER_ARCH || 'unknown';
   
   return metrics;
 }

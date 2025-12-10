@@ -1,22 +1,41 @@
 /**
  * Type definitions for CI/CD Observability Action
+ *
+ * Based on OpenTelemetry Semantic Conventions for CI/CD:
+ * https://opentelemetry.io/docs/specs/semconv/registry/attributes/cicd/
  */
-export interface Metadata {
+/**
+ * CI/CD Pipeline Attributes (OpenTelemetry Semantic Conventions)
+ */
+export interface CICDPipelineAttributes {
+    'cicd.pipeline.name': string;
+    'cicd.pipeline.run.id': string;
+    'cicd.pipeline.run.url.full'?: string;
+    'cicd.pipeline.run.state'?: 'pending' | 'executing' | 'finalizing';
+    'cicd.pipeline.result'?: 'success' | 'failure' | 'cancellation' | 'error' | 'skip' | 'timeout';
+    'cicd.pipeline.task.name'?: string;
+    'cicd.pipeline.task.run.id'?: string;
+    'cicd.pipeline.task.run.url.full'?: string;
+    'cicd.pipeline.task.run.result'?: 'success' | 'failure' | 'cancellation' | 'error' | 'skip' | 'timeout';
+    'cicd.pipeline.task.type'?: 'build' | 'test' | 'deploy' | string;
+    'cicd.worker.name'?: string;
+    'cicd.worker.state'?: 'available' | 'busy' | 'offline';
+}
+/**
+ * Extended metadata with semantic convention attributes
+ */
+export interface Metadata extends CICDPipelineAttributes {
     timestamp: string;
     repository: string;
-    workflow: string;
-    job: string;
-    runId: number;
-    runNumber: number;
     actor: string;
     ref: string;
     sha: string;
     eventName: string;
 }
 export interface JobMetrics {
-    actionDuration?: number;
-    workflowDuration?: number;
-    queueTime?: number;
+    'cicd.pipeline.run.duration'?: number;
+    'cicd.pipeline.run.queue_time'?: number;
+    'cicd.pipeline.task.run.duration'?: number;
     [key: string]: number | string | undefined;
 }
 export interface TestResults {

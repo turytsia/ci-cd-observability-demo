@@ -82,3 +82,4 @@ observability_output/
 webhook_payload.json
 
 node_modules/
+dist/

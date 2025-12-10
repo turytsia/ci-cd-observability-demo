@@ -37,19 +37,27 @@ async function run(): Promise<void> {
     const webhookUrl = core.getInput('webhook-url');
     const webhookSecret = core.getInput('webhook-secret');
     
-    // Initialize observability data
+    // Initialize observability data with OpenTelemetry CI/CD semantic conventions
+    const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`;
+    const taskUrl = `${runUrl}/job/${github.context.job}`;
+    
     const data: ObservabilityData = {
       metadata: {
         timestamp: new Date().toISOString(),
         repository: github.context.repo.owner + '/' + github.context.repo.repo,
-        workflow: github.context.workflow,
-        job: github.context.job,
-        runId: github.context.runId,
-        runNumber: github.context.runNumber,
         actor: github.context.actor,
         ref: github.context.ref,
         sha: github.context.sha,
         eventName: github.context.eventName,
+        // OpenTelemetry CI/CD semantic convention attributes
+        'cicd.pipeline.name': github.context.workflow,
+        'cicd.pipeline.run.id': github.context.runId.toString(),
+        'cicd.pipeline.run.url.full': runUrl,
+        'cicd.pipeline.run.state': 'executing',
+        'cicd.pipeline.task.name': github.context.job,
+        'cicd.pipeline.task.run.id': `${github.context.runId}-${github.context.job}`,
+        'cicd.pipeline.task.run.url.full': taskUrl,
+        'cicd.worker.name': process.env.RUNNER_NAME || 'unknown',
       },
       metrics: {},
       testResults: null,
@@ -85,9 +93,9 @@ async function run(): Promise<void> {
       }
     }
     
-    // Calculate duration
+    // Calculate duration using semantic convention attribute
     const duration = (Date.now() - startTime) / 1000;
-    data.metrics.actionDuration = duration;
+    data.metrics['cicd.pipeline.task.run.duration'] = duration;
     
     // Generate reports (includes GitHub Job Summary)
     core.info('📄 Generating reports...');

@@ -78,12 +78,15 @@ export async function createCheckRun(
     }
     
     if (data.metrics) {
-      summaryLines.push('### ⏱️ Metrics');
-      if (data.metrics.workflowDuration !== undefined) {
-        summaryLines.push(`- Workflow Duration: ${data.metrics.workflowDuration.toFixed(1)}s`);
+      summaryLines.push('### ⏱️ Metrics (OpenTelemetry CI/CD)');
+      if (data.metrics['cicd.pipeline.run.duration'] !== undefined) {
+        summaryLines.push(`- cicd.pipeline.run.duration: ${(data.metrics['cicd.pipeline.run.duration'] as number).toFixed(1)}s`);
       }
-      if (data.metrics.queueTime !== undefined) {
-        summaryLines.push(`- Queue Time: ${data.metrics.queueTime.toFixed(1)}s`);
+      if (data.metrics['cicd.pipeline.run.queue_time'] !== undefined) {
+        summaryLines.push(`- cicd.pipeline.run.queue_time: ${(data.metrics['cicd.pipeline.run.queue_time'] as number).toFixed(1)}s`);
+      }
+      if (data.metrics['cicd.pipeline.task.run.duration'] !== undefined) {
+        summaryLines.push(`- cicd.pipeline.task.run.duration: ${(data.metrics['cicd.pipeline.task.run.duration'] as number).toFixed(1)}s`);
       }
     }
     

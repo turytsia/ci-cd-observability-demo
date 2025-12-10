@@ -1,36 +1,36 @@
 {
-  "name": "cicd-observability-action",
-  "version": "1.0.0",
-  "description": "GitHub Action for CI/CD observability without third-party services",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
-    "lint": "eslint src/**/*.ts",
-    "test": "jest",
-    "package": "npm run build",
-    "all": "npm run lint && npm run test && npm run build"
-  },
-  "keywords": [
-    "github",
-    "actions",
-    "observability",
-    "metrics",
-    "cicd",
-    "monitoring"
-  ],
-  "author": "turytsia",
-  "license": "MIT",
-  "dependencies": {
-    "@actions/artifact": "^2.1.0",
-    "@actions/core": "^1.10.1",
-    "@actions/exec": "^1.1.1",
-    "@actions/github": "^6.0.0",
-    "@actions/glob": "^0.4.0",
-    "@actions/io": "^1.1.3"
-  },
-  "devDependencies": {
-    "@types/node": "^20.10.0",
-    "@vercel/ncc": "^0.38.1",
-    "typescript": "^5.3.0"
-  }
+    "name": "cicd-observability-action",
+    "version": "1.0.0",
+    "description": "GitHub Action for CI/CD observability without third-party services",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
+        "lint": "eslint src/**/*.ts",
+        "test": "jest",
+        "package": "npm run build",
+        "all": "npm run lint && npm run test && npm run build"
+    },
+    "keywords": [
+        "github",
+        "actions",
+        "observability",
+        "metrics",
+        "cicd",
+        "monitoring"
+    ],
+    "author": "turytsia",
+    "license": "MIT",
+    "dependencies": {
+        "@actions/artifact": "^2.1.0",
+        "@actions/core": "^1.10.1",
+        "@actions/exec": "^1.1.1",
+        "@actions/github": "^6.0.0",
+        "@actions/glob": "^0.4.0",
+        "@actions/io": "^1.1.3"
+    },
+    "devDependencies": {
+        "@types/node": "^20.10.0",
+        "@vercel/ncc": "^0.38.1",
+        "typescript": "^5.3.0"
+    }
 }

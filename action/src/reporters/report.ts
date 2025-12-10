@@ -53,41 +53,44 @@ async function generateGitHubSummary(data: ObservabilityData): Promise<void> {
   lines.push('# 📊 CI/CD Observability Report');
   lines.push('');
   
-  // Metadata section
-  lines.push('## 🔍 Build Information');
+  // Metadata section using OpenTelemetry semantic conventions
+  lines.push('## 🔍 Pipeline Information');
   lines.push('');
-  lines.push('| Property | Value |');
+  lines.push('| Attribute | Value |');
   lines.push('|----------|-------|');
-  lines.push(`| Workflow | \`${data.metadata.workflow}\` |`);
-  lines.push(`| Job | \`${data.metadata.job}\` |`);
-  lines.push(`| Run | [#${data.metadata.runNumber}](https://github.com/${data.metadata.repository}/actions/runs/${data.metadata.runId}) |`);
+  lines.push(`| cicd.pipeline.name | \`${data.metadata['cicd.pipeline.name']}\` |`);
+  lines.push(`| cicd.pipeline.task.name | \`${data.metadata['cicd.pipeline.task.name'] || 'N/A'}\` |`);
+  lines.push(`| cicd.pipeline.run.id | [${data.metadata['cicd.pipeline.run.id']}](${data.metadata['cicd.pipeline.run.url.full']}) |`);
   lines.push(`| Commit | \`${data.metadata.sha.substring(0, 7)}\` |`);
   lines.push(`| Branch | \`${data.metadata.ref}\` |`);
   lines.push(`| Actor | @${data.metadata.actor} |`);
   lines.push(`| Event | \`${data.metadata.eventName}\` |`);
   lines.push('');
   
-  // Metrics section
+  // Metrics section using semantic conventions
   if (data.metrics && Object.keys(data.metrics).length > 0) {
-    lines.push('## ⏱️ Metrics');
+    lines.push('## ⏱️ Metrics (OpenTelemetry CI/CD Semantic Conventions)');
     lines.push('');
     lines.push('| Metric | Value |');
     lines.push('|--------|-------|');
     
-    if (data.metrics.workflowDuration !== undefined) {
-      lines.push(`| Workflow Duration | ${formatDuration(data.metrics.workflowDuration)} |`);
+    if (data.metrics['cicd.pipeline.run.duration'] !== undefined) {
+      lines.push(`| cicd.pipeline.run.duration | ${formatDuration(data.metrics['cicd.pipeline.run.duration'] as number)} |`);
     }
-    if (data.metrics.actionDuration !== undefined) {
-      lines.push(`| Action Duration | ${formatDuration(data.metrics.actionDuration)} |`);
+    if (data.metrics['cicd.pipeline.task.run.duration'] !== undefined) {
+      lines.push(`| cicd.pipeline.task.run.duration | ${formatDuration(data.metrics['cicd.pipeline.task.run.duration'] as number)} |`);
     }
-    if (data.metrics.queueTime !== undefined) {
-      lines.push(`| Queue Time | ${formatDuration(data.metrics.queueTime)} |`);
+    if (data.metrics['cicd.pipeline.run.queue_time'] !== undefined) {
+      lines.push(`| cicd.pipeline.run.queue_time | ${formatDuration(data.metrics['cicd.pipeline.run.queue_time'] as number)} |`);
     }
-    if (data.metrics.runnerOs) {
-      lines.push(`| Runner OS | ${data.metrics.runnerOs} |`);
+    if (data.metrics['cicd.worker.name']) {
+      lines.push(`| cicd.worker.name | ${data.metrics['cicd.worker.name']} |`);
     }
-    if (data.metrics.runnerArch) {
-      lines.push(`| Runner Arch | ${data.metrics.runnerArch} |`);
+    if (data.metrics['cicd.worker.os']) {
+      lines.push(`| cicd.worker.os | ${data.metrics['cicd.worker.os']} |`);
+    }
+    if (data.metrics['cicd.worker.arch']) {
+      lines.push(`| cicd.worker.arch | ${data.metrics['cicd.worker.arch']} |`);
     }
     lines.push('');
   }
@@ -176,7 +179,7 @@ function generateHTMLReport(data: ObservabilityData): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CI/CD Observability Report - ${data.metadata.workflow}</title>
+  <title>CI/CD Observability Report - ${data.metadata['cicd.pipeline.name']}</title>
   <style>
     :root {
       --bg-color: #0d1117;
@@ -305,34 +308,35 @@ function generateHTMLReport(data: ObservabilityData): string {
   <div class="container">
     <header>
       <h1>📊 CI/CD Observability Report</h1>
-      <p class="subtitle">${data.metadata.workflow} - Run #${data.metadata.runNumber}</p>
+      <p class="subtitle">${data.metadata['cicd.pipeline.name']} - Run #${data.metadata['cicd.pipeline.run.id']}</p>
     </header>
     
     <div class="grid">
       <div class="card">
-        <h2>🔍 Build Information</h2>
+        <h2>🔍 Pipeline Information (OpenTelemetry)</h2>
         <ul class="meta-list">
+          <li><span class="meta-key">cicd.pipeline.name</span><span class="meta-value">${data.metadata['cicd.pipeline.name']}</span></li>
+          <li><span class="meta-key">cicd.pipeline.task.name</span><span class="meta-value">${data.metadata['cicd.pipeline.task.name'] || 'N/A'}</span></li>
           <li><span class="meta-key">Repository</span><span class="meta-value">${data.metadata.repository}</span></li>
           <li><span class="meta-key">Branch</span><span class="meta-value">${data.metadata.ref}</span></li>
           <li><span class="meta-key">Commit</span><span class="meta-value">${data.metadata.sha.substring(0, 7)}</span></li>
           <li><span class="meta-key">Actor</span><span class="meta-value">${data.metadata.actor}</span></li>
-          <li><span class="meta-key">Event</span><span class="meta-value">${data.metadata.eventName}</span></li>
         </ul>
       </div>
       
       ${data.metrics ? `
       <div class="card">
-        <h2>⏱️ Metrics</h2>
+        <h2>⏱️ Metrics (Semantic Conventions)</h2>
         <div class="stat-grid">
-          ${data.metrics.workflowDuration !== undefined ? `
+          ${data.metrics['cicd.pipeline.run.duration'] !== undefined ? `
           <div class="stat">
-            <div class="stat-value info">${formatDuration(data.metrics.workflowDuration)}</div>
-            <div class="stat-label">Workflow Duration</div>
+            <div class="stat-value info">${formatDuration(data.metrics['cicd.pipeline.run.duration'] as number)}</div>
+            <div class="stat-label">cicd.pipeline.run.duration</div>
           </div>` : ''}
-          ${data.metrics.queueTime !== undefined ? `
+          ${data.metrics['cicd.pipeline.run.queue_time'] !== undefined ? `
           <div class="stat">
-            <div class="stat-value">${formatDuration(data.metrics.queueTime)}</div>
-            <div class="stat-label">Queue Time</div>
+            <div class="stat-value">${formatDuration(data.metrics['cicd.pipeline.run.queue_time'] as number)}</div>
+            <div class="stat-label">cicd.pipeline.run.queue_time</div>
           </div>` : ''}
         </div>
       </div>` : ''}
