@@ -10,7 +10,7 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
@@ -23,6 +23,9 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Keep action dist folder
+!action/dist/
 
 # PyInstaller
 *.manifest
@@ -77,3 +80,5 @@ observability_output/
 *.html
 !templates/*.html
 webhook_payload.json
+
+node_modules/

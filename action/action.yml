@@ -1,0 +1,104 @@
+name: 'CI/CD Observability'
+description: 'Collect and report CI/CD observability metrics, logs, and traces without third-party services'
+author: 'turytsia'
+
+branding:
+  icon: 'activity'
+  color: 'blue'
+
+inputs:
+  # Basic configuration
+  token:
+    description: 'GitHub token for API access (usually secrets.GITHUB_TOKEN)'
+    required: false
+    default: ${{ github.token }}
+  
+  # What to collect
+  collect-job-metrics:
+    description: 'Collect job timing and status metrics'
+    required: false
+    default: 'true'
+  
+  collect-test-results:
+    description: 'Parse and collect test results (JUnit XML)'
+    required: false
+    default: 'true'
+  
+  test-results-path:
+    description: 'Path to JUnit XML test results file(s)'
+    required: false
+    default: '**/test-results.xml'
+  
+  collect-coverage:
+    description: 'Parse and collect code coverage'
+    required: false
+    default: 'true'
+  
+  coverage-path:
+    description: 'Path to coverage file (XML or JSON)'
+    required: false
+    default: '**/coverage.xml'
+  
+  # Custom metrics
+  custom-metrics:
+    description: 'JSON string of custom metrics to include'
+    required: false
+    default: '{}'
+  
+  # Output configuration
+  output-format:
+    description: 'Output format for reports (html, json, or all)'
+    required: false
+    default: 'all'
+  
+  create-check:
+    description: 'Create a GitHub Check Run with detailed report'
+    required: false
+    default: 'false'
+  
+  upload-artifact:
+    description: 'Upload observability data as artifact'
+    required: false
+    default: 'true'
+  
+  artifact-name:
+    description: 'Name of the artifact to upload'
+    required: false
+    default: 'observability-report'
+  
+  # Webhook (optional)
+  webhook-url:
+    description: 'URL to send observability data via webhook'
+    required: false
+    default: ''
+  
+  webhook-secret:
+    description: 'Secret for webhook signature'
+    required: false
+    default: ''
+
+outputs:
+  report-path:
+    description: 'Path to the generated observability report'
+  
+  metrics-json:
+    description: 'JSON string containing all collected metrics'
+  
+  total-tests:
+    description: 'Total number of tests'
+  
+  passed-tests:
+    description: 'Number of passed tests'
+  
+  failed-tests:
+    description: 'Number of failed tests'
+  
+  coverage-percent:
+    description: 'Code coverage percentage'
+  
+  job-duration:
+    description: 'Job duration in seconds'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
