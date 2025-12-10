@@ -1,0 +1,300 @@
+name: CI/CD with Observability
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual triggers
+
+env:
+  PYTHON_VERSION: '3.11'
+  OBSERVABILITY_OUTPUT: observability_output
+
+jobs:
+  # Job 1: Lint and Static Analysis
+  lint:
+    name: 🔍 Lint & Analysis
+    runs-on: ubuntu-latest
+    outputs:
+      lint_status: ${{ steps.lint.outputs.status }}
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort
+          pip install -r requirements.txt
+
+      - name: 🎨 Check code formatting
+        id: lint
+        run: |
+          echo "::group::Running Black (formatter check)"
+          black --check --diff src/ observability/ scripts/ tests/ || echo "status=warning" >> $GITHUB_OUTPUT
+          echo "::endgroup::"
+          
+          echo "::group::Running isort (import order check)"
+          isort --check-only --diff src/ observability/ scripts/ tests/ || true
+          echo "::endgroup::"
+          
+          echo "::group::Running Flake8 (linter)"
+          flake8 src/ observability/ scripts/ tests/ --max-line-length=120 --ignore=E501,W503 || true
+          echo "::endgroup::"
+          
+          echo "status=success" >> $GITHUB_OUTPUT
+
+  # Job 2: Run Tests with Observability
+  test:
+    name: 🧪 Test & Observe
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔧 Create observability output directory
+        run: mkdir -p ${{ env.OBSERVABILITY_OUTPUT }}
+
+      - name: 🧪 Run tests with coverage
+        id: tests
+        run: |
+          echo "::group::Running pytest with coverage"
+          
+          # Run tests and capture results
+          python -m pytest tests/ \
+            --verbose \
+            --tb=short \
+            --cov=src \
+            --cov=observability \
+            --cov-report=term-missing \
+            --cov-report=json:${{ env.OBSERVABILITY_OUTPUT }}/coverage.json \
+            --cov-report=html:${{ env.OBSERVABILITY_OUTPUT }}/coverage_html \
+            --junit-xml=${{ env.OBSERVABILITY_OUTPUT }}/test_results.xml \
+            2>&1 | tee ${{ env.OBSERVABILITY_OUTPUT }}/test_output.txt
+          
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+          echo "test_exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+          
+          echo "::endgroup::"
+          
+          # Parse test results for observability
+          echo "::group::Parsing test results"
+          python scripts/parse_test_results.py || true
+          echo "::endgroup::"
+
+      - name: 📊 Run observability demo
+        id: observability
+        run: |
+          echo "::group::Running application with observability"
+          python scripts/run_with_observability.py
+          echo "::endgroup::"
+
+      - name: 📈 Generate reports
+        run: |
+          echo "::group::Generating observability reports"
+          python scripts/generate_report.py --format both
+          echo "::endgroup::"
+
+      - name: 📤 Upload observability artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: observability-report
+          path: |
+            ${{ env.OBSERVABILITY_OUTPUT }}/
+          retention-days: 30
+
+      - name: 📝 Create job summary
+        run: |
+          python scripts/create_github_summary.py >> $GITHUB_STEP_SUMMARY
+
+  # Job 3: Build (simulated)
+  build:
+    name: 🔨 Build
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔨 Build package
+        run: |
+          echo "::group::Creating package structure"
+          mkdir -p dist
+          
+          # Create a simple distributable
+          python -c "
+          import json
+          import os
+          from datetime import datetime
+          
+          manifest = {
+              'name': 'ci-cd-observability-demo',
+              'version': '1.0.0',
+              'build_time': datetime.now().isoformat(),
+              'commit': os.environ.get('GITHUB_SHA', 'unknown'),
+              'ref': os.environ.get('GITHUB_REF', 'unknown'),
+              'run_id': os.environ.get('GITHUB_RUN_ID', 'unknown')
+          }
+          
+          with open('dist/manifest.json', 'w') as f:
+              json.dump(manifest, f, indent=2)
+          
+          print('Build manifest created:')
+          print(json.dumps(manifest, indent=2))
+          "
+          echo "::endgroup::"
+
+      - name: 📤 Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+          retention-days: 7
+
+  # Job 4: Deploy (simulated)
+  deploy:
+    name: 🚀 Deploy
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    
+    steps:
+      - name: 📥 Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+
+      - name: 🚀 Simulate deployment
+        run: |
+          echo "::group::Deployment simulation"
+          echo "📦 Deploying version from manifest:"
+          cat dist/manifest.json
+          echo ""
+          echo "✅ Deployment simulation complete!"
+          echo "::endgroup::"
+
+      - name: 📊 Download observability report
+        uses: actions/download-artifact@v4
+        with:
+          name: observability-report
+          path: observability_output/
+
+      - name: 📝 Create deployment summary
+        run: |
+          echo "# 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+          cat dist/manifest.json >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Observability" >> $GITHUB_STEP_SUMMARY
+          echo "See the **observability-report** artifact for detailed metrics, logs, and traces." >> $GITHUB_STEP_SUMMARY
+
+  # Job 5: Notify (webhook simulation)
+  notify:
+    name: 📢 Notify
+    runs-on: ubuntu-latest
+    needs: [lint, test, build]
+    if: always()
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 📊 Download observability report
+        uses: actions/download-artifact@v4
+        with:
+          name: observability-report
+          path: observability_output/
+        continue-on-error: true
+
+      - name: 📢 Generate notification payload
+        run: |
+          python -c "
+          import json
+          import os
+          from datetime import datetime
+          
+          # Collect job statuses
+          payload = {
+              'event': 'ci_cd_complete',
+              'timestamp': datetime.now().isoformat(),
+              'repository': os.environ.get('GITHUB_REPOSITORY', 'unknown'),
+              'ref': os.environ.get('GITHUB_REF', 'unknown'),
+              'sha': os.environ.get('GITHUB_SHA', 'unknown')[:7],
+              'run_id': os.environ.get('GITHUB_RUN_ID', 'unknown'),
+              'run_url': f\"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}\",
+              'jobs': {
+                  'lint': '${{ needs.lint.result }}',
+                  'test': '${{ needs.test.result }}',
+                  'build': '${{ needs.build.result }}'
+              }
+          }
+          
+          # Try to load observability summary
+          try:
+              with open('observability_output/observability_data.json', 'r') as f:
+                  obs_data = json.load(f)
+                  metrics = obs_data.get('metrics', {})
+                  counters = metrics.get('counters', {})
+                  payload['observability'] = {
+                      'operations': counters.get('workflow.operations', {}).get('value', 0),
+                      'errors': counters.get('workflow.errors', {}).get('value', 0)
+                  }
+          except:
+              payload['observability'] = {'status': 'unavailable'}
+          
+          print('Webhook Payload:')
+          print(json.dumps(payload, indent=2))
+          
+          # Save payload for potential webhook
+          with open('webhook_payload.json', 'w') as f:
+              json.dump(payload, f, indent=2)
+          "
+
+      - name: 📤 Upload notification payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: webhook-payload
+          path: webhook_payload.json
+          retention-days: 7

@@ -1,0 +1,11 @@
+# CI/CD Observability Demo - Dependencies
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# System metrics (optional - graceful fallback if not available)
+psutil>=5.9.0
+
+# No third-party observability libraries!
+# All observability is custom-built in the observability/ directory
