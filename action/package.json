@@ -1,36 +1,36 @@
 {
-  "name": "cicd-observability-action",
-  "version": "1.0.0",
-  "description": "GitHub Action for CI/CD observability with OpenTelemetry semantic conventions",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src/",
-    "test": "jest",
-    "all": "npm run typecheck && npm run build"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/turytsia/ci-cd-observability-demo"
-  },
-  "keywords": [
-    "github-action",
-    "cicd",
-    "observability",
-    "metrics",
-    "traces",
-    "opentelemetry"
-  ],
-  "author": "turytsia",
-  "license": "MIT",
-  "dependencies": {
-    "@actions/core": "^1.10.1",
-    "@actions/github": "^6.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.10.0",
-    "@vercel/ncc": "^0.38.1",
-    "typescript": "^5.3.2"
-  }
+    "name": "cicd-observability-action",
+    "version": "1.0.0",
+    "description": "GitHub Action for CI/CD observability with OpenTelemetry semantic conventions",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint src/",
+        "test": "jest",
+        "all": "npm run typecheck && npm run build"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/turytsia/ci-cd-observability-demo"
+    },
+    "keywords": [
+        "github-action",
+        "cicd",
+        "observability",
+        "metrics",
+        "traces",
+        "opentelemetry"
+    ],
+    "author": "turytsia",
+    "license": "MIT",
+    "dependencies": {
+        "@actions/core": "^1.10.1",
+        "@actions/github": "^6.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.10.0",
+        "@vercel/ncc": "^0.38.1",
+        "typescript": "^5.3.2"
+    }
 }

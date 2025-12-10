@@ -40,24 +40,6 @@ jobs:
             --cov-report=xml:coverage.xml \
             --junit-xml=test-results.xml
 
-      # Use the reusable observability action
-      - name: 📊 CI/CD Observability
-        uses: ./action
-        if: always()
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          collect-job-metrics: true
-          collect-test-results: true
-          test-results-path: '**/test-results.xml'
-          collect-coverage: true
-          coverage-path: '**/coverage.xml'
-          create-check: true
-          upload-artifact: true
-          artifact-name: 'observability-report'
-          # Optional: send to external webhook
-          # webhook-url: ${{ secrets.OBSERVABILITY_WEBHOOK_URL }}
-          # webhook-secret: ${{ secrets.OBSERVABILITY_WEBHOOK_SECRET }}
-
   build:
     name: 🔨 Build
     runs-on: ubuntu-latest
@@ -121,17 +103,21 @@ jobs:
           echo "✅ Deployment complete!"
 
       # Observability for deploy job with custom metrics
-      - name: 📊 CI/CD Observability
+  observability:
+    name: 🔭 Observability
+    runs-on: ubuntu-latest
+    needs: [test, build, deploy]
+    if: always()
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔭 Collect CI/CD Observability
         uses: ./action
-        if: always()
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          collect-job-metrics: true
-          collect-test-results: false
-          collect-coverage: false
-          custom-metrics: |
-            {
-              "deployment_environment": "production",
-              "deployment_type": "simulated"
-            }
-          artifact-name: 'deploy-observability-report'
+          collect-metrics: 'true'
+          collect-traces: 'true'
+          # webhook-url: 'https://your-server.com/webhook'  # Uncomment to send to your server
+          # webhook-secret: ${{ secrets.WEBHOOK_SECRET }}   # Uncomment if using webhook
