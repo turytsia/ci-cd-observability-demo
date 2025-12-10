@@ -1,152 +1,178 @@
-# CI/CD Observability GitHub Action
+# CI/CD Observability Action
 
-A GitHub Action for collecting and reporting CI/CD observability metrics, test results, and code coverage without requiring third-party services.
+A GitHub Action for collecting CI/CD metrics and traces following [OpenTelemetry CI/CD Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/attributes/cicd/).
 
 ## Features
 
-- 📊 **Job Metrics** - Collect workflow duration, queue time, runner info
-- 🧪 **Test Results** - Parse JUnit XML test results from any test framework
-- 📈 **Code Coverage** - Parse Cobertura XML, LCOV, or JSON coverage reports
-- 📋 **Job Summary** - Beautiful GitHub Actions job summary with all data
-- ✅ **Check Runs** - Create GitHub Check Runs with annotations for failures
-- 📦 **Artifacts** - Upload reports as downloadable artifacts
-- 🔔 **Webhooks** - Send data to external systems via webhook
+- 📊 **Metrics Collection**: Pipeline duration, task counts, queue time, and more
+- 🔍 **Traces Collection**: Hierarchical spans for Pipeline → Jobs → Steps
+- 📝 **GitHub Job Summary**: Beautiful markdown output on the workflow page
+- 📤 **Webhook Support**: Send data to your observability backend
+- 🏷️ **OTel Semantic Conventions**: Industry-standard attribute names
 
 ## Usage
 
 ### Basic Usage
 
 ```yaml
-- name: CI/CD Observability
-  uses: ./.github/actions/observability
+- name: 🔭 Collect CI/CD Observability
+  uses: ./action
   with:
     token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### With Webhook
+
+```yaml
+- name: 🔭 Collect CI/CD Observability
+  uses: ./action
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+    webhook-url: 'https://your-server.com/api/observability'
+    webhook-secret: ${{ secrets.WEBHOOK_SECRET }}
 ```
 
 ### Full Example
 
 ```yaml
-name: CI with Observability
+observability:
+  name: 🔭 Observability
+  runs-on: ubuntu-latest
+  needs: [lint, test, build, deploy]
+  if: always()  # Run even if previous jobs fail
+  
+  steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
 
-on: [push, pull_request]
+    - name: 🔭 Collect CI/CD Observability
+      id: observability
+      uses: ./action
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        collect-metrics: 'true'
+        collect-traces: 'true'
+        webhook-url: ${{ secrets.OBSERVABILITY_WEBHOOK_URL }}
+        webhook-secret: ${{ secrets.WEBHOOK_SECRET }}
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      
-      - name: Run tests
-        run: pytest --junitxml=test-results.xml --cov=. --cov-report=xml
-      
-      - name: CI/CD Observability
-        uses: ./.github/actions/observability
-        if: always()  # Run even if tests fail
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          test-results-path: '**/test-results.xml'
-          coverage-path: '**/coverage.xml'
-          create-check: true
-          upload-artifact: true
+    - name: 📊 Use Outputs
+      run: |
+        echo "Summary: ${{ steps.observability.outputs.summary }}"
 ```
 
 ## Inputs
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
-| `token` | GitHub token for API access | No | `${{ github.token }}` |
-| `collect-job-metrics` | Collect job timing and status metrics | No | `true` |
-| `collect-test-results` | Parse and collect test results | No | `true` |
-| `test-results-path` | Path to JUnit XML test results | No | `**/test-results.xml` |
-| `collect-coverage` | Parse and collect code coverage | No | `true` |
-| `coverage-path` | Path to coverage file | No | `**/coverage.xml` |
-| `custom-metrics` | JSON string of custom metrics | No | `{}` |
-| `output-format` | Report format (html, json, all) | No | `all` |
-| `create-check` | Create GitHub Check Run | No | `false` |
-| `upload-artifact` | Upload reports as artifact | No | `true` |
-| `artifact-name` | Name of the artifact | No | `observability-report` |
-| `webhook-url` | URL for webhook notifications | No | |
-| `webhook-secret` | Secret for webhook signature | No | |
+| `token` | GitHub token for API access | Yes | `${{ github.token }}` |
+| `webhook-url` | Webhook URL to send observability data | No | - |
+| `webhook-secret` | Secret for signing webhook payloads (HMAC-SHA256) | No | - |
+| `collect-metrics` | Enable metrics collection | No | `true` |
+| `collect-traces` | Enable traces collection | No | `true` |
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
-| `report-path` | Path to generated report files |
-| `metrics-json` | JSON string with all collected metrics |
-| `total-tests` | Total number of tests |
-| `passed-tests` | Number of passed tests |
-| `failed-tests` | Number of failed tests |
-| `coverage-percent` | Code coverage percentage |
-| `job-duration` | Action duration in seconds |
+| `metrics-json` | Collected metrics in JSON format |
+| `traces-json` | Collected traces in JSON format |
+| `summary` | Brief text summary of observability data |
 
-## Supported Test Result Formats
+## OpenTelemetry Semantic Conventions
 
-- JUnit XML (pytest, Jest, JUnit, NUnit, etc.)
+This action follows the [OTel CI/CD Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/attributes/cicd/) for attribute naming.
 
-## Supported Coverage Formats
+### Pipeline Attributes
 
-- Cobertura XML (coverage.py, istanbul/nyc, etc.)
-- LCOV
-- Istanbul/NYC JSON
+| Attribute | Description |
+|-----------|-------------|
+| `cicd.pipeline.name` | Pipeline/workflow name |
+| `cicd.pipeline.run.id` | Unique run identifier |
+| `cicd.pipeline.run.number` | Run number |
+| `cicd.pipeline.run.url.full` | Full URL to the run |
+| `cicd.pipeline.run.state` | Current state: `pending`, `executing`, `finalizing` |
+| `cicd.pipeline.run.attempt` | Run attempt number |
+| `cicd.pipeline.trigger.event` | Trigger event (push, pull_request, etc.) |
+| `cicd.pipeline.trigger.ref` | Branch or tag ref |
+| `cicd.pipeline.trigger.sha` | Commit SHA |
 
-## Custom Metrics
+### Task (Job) Attributes
 
-You can pass custom metrics as a JSON string:
+| Attribute | Description |
+|-----------|-------------|
+| `cicd.pipeline.task.name` | Job name |
+| `cicd.pipeline.task.run.id` | Job run ID |
+| `cicd.pipeline.task.type` | Type: `build`, `test`, `deploy`, `lint`, `notify`, `other` |
+| `cicd.pipeline.task.run.url.full` | URL to the job |
 
-```yaml
-- name: CI/CD Observability
-  uses: ./.github/actions/observability
-  with:
-    custom-metrics: |
-      {
-        "build_size_mb": 42.5,
-        "dependency_count": 127,
-        "security_vulnerabilities": 0
-      }
-```
+### Worker (Runner) Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `cicd.worker.name` | Runner name |
+| `cicd.worker.os` | Operating system |
+| `cicd.worker.arch` | Architecture |
 
 ## Webhook Payload
 
-When configured with a webhook URL, the action sends a POST request with:
+When `webhook-url` is configured, the action sends a POST request with the following structure:
 
 ```json
 {
-  "event": "observability_report",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "data": {
-    "metadata": {
-      "repository": "owner/repo",
-      "workflow": "CI",
-      "runId": 12345,
-      ...
-    },
-    "metrics": { ... },
-    "testResults": { ... },
-    "coverage": { ... }
+  "schema_version": "1.0.0",
+  "metrics": {
+    "pipeline": { ... },
+    "worker": { ... },
+    "cicd.pipeline.run.duration_ms": 120000,
+    "cicd.pipeline.task.count": 4,
+    "cicd.pipeline.task.success_count": 3,
+    "cicd.pipeline.task.failure_count": 1,
+    "tasks": [ ... ]
+  },
+  "traces": {
+    "trace_id": "abc123...",
+    "spans": [ ... ]
+  },
+  "metadata": {
+    "collected_at": "2024-01-15T10:30:00Z",
+    "collector_version": "1.0.0"
   }
 }
 ```
 
-If `webhook-secret` is provided, the payload is signed with HMAC-SHA256 and included in the `X-Signature-256` header.
+### Webhook Headers
 
-## Building from Source
+| Header | Description |
+|--------|-------------|
+| `Content-Type` | `application/json` |
+| `X-Signature-256` | HMAC-SHA256 signature (if secret provided) |
+| `X-Pipeline-Run-Id` | Pipeline run ID |
+| `X-Trace-Id` | Trace ID |
+
+## GitHub Job Summary
+
+The action automatically writes a comprehensive summary to the GitHub Actions job summary, including:
+
+- Pipeline overview with all OTel attributes
+- Timing metrics (duration, queue time)
+- Task summary (success/failure counts)
+- Task details table
+- Trace tree visualization
+- Span timeline
+
+## Development
 
 ```bash
+# Install dependencies
 cd action
 npm install
+
+# Type check
+npm run typecheck
+
+# Build
 npm run build
 ```
-
-The compiled action will be in `dist/index.js`.
 
 ## License
 

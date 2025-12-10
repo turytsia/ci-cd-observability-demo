@@ -1,10 +1,12 @@
 /**
  * Metrics Collector
  *
- * Collects job-level metrics from the GitHub Actions environment
- * following OpenTelemetry CI/CD Semantic Conventions:
- * https://opentelemetry.io/docs/specs/semconv/registry/attributes/cicd/
+ * Collects CI/CD metrics following OpenTelemetry semantic conventions.
+ * https://opentelemetry.io/docs/specs/semconv/attributes/cicd/
  */
-import { JobMetrics } from '../types';
-export declare function collectMetrics(token: string): Promise<JobMetrics>;
+import type { CICDMetrics } from '../types';
+/**
+ * Collects CI/CD metrics from GitHub Actions
+ */
+export declare function collectMetrics(token: string): Promise<CICDMetrics>;
 //# sourceMappingURL=metrics.d.ts.map

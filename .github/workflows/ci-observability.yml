@@ -97,36 +97,14 @@ jobs:
           echo "test_exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
           
           echo "::endgroup::"
-          
-          # Parse test results for observability
-          echo "::group::Parsing test results"
-          python scripts/parse_test_results.py || true
-          echo "::endgroup::"
 
-      - name: 📊 Run observability demo
-        id: observability
-        run: |
-          echo "::group::Running application with observability"
-          python scripts/run_with_observability.py
-          echo "::endgroup::"
-
-      - name: 📈 Generate reports
-        run: |
-          echo "::group::Generating observability reports"
-          python scripts/generate_report.py --format both
-          echo "::endgroup::"
-
-      - name: 📤 Upload observability artifacts
+      - name: 📤 Upload test artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: observability-report
+          name: test-results
           path: |
             ${{ env.OBSERVABILITY_OUTPUT }}/
           retention-days: 30
-
-      - name: 📝 Create job summary
-        run: |
-          python scripts/create_github_summary.py >> $GITHUB_STEP_SUMMARY
 
   # Job 3: Build (simulated)
   build:
@@ -271,19 +249,6 @@ jobs:
               }
           }
           
-          # Try to load observability summary
-          try:
-              with open('observability_output/observability_data.json', 'r') as f:
-                  obs_data = json.load(f)
-                  metrics = obs_data.get('metrics', {})
-                  counters = metrics.get('counters', {})
-                  payload['observability'] = {
-                      'operations': counters.get('workflow.operations', {}).get('value', 0),
-                      'errors': counters.get('workflow.errors', {}).get('value', 0)
-                  }
-          except:
-              payload['observability'] = {'status': 'unavailable'}
-          
           print('Webhook Payload:')
           print(json.dumps(payload, indent=2))
           
@@ -298,3 +263,23 @@ jobs:
           name: webhook-payload
           path: webhook_payload.json
           retention-days: 7
+
+  # Job 6: CI/CD Observability Collection
+  observability:
+    name: 🔭 Observability
+    runs-on: ubuntu-latest
+    needs: [lint, test, build]
+    if: always()
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔭 Collect CI/CD Observability
+        uses: ./action
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          collect-metrics: 'true'
+          collect-traces: 'true'
+          # webhook-url: 'https://your-server.com/webhook'  # Uncomment to send to your server
+          # webhook-secret: ${{ secrets.WEBHOOK_SECRET }}   # Uncomment if using webhook
