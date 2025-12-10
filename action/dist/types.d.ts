@@ -5,6 +5,7 @@
  * https://opentelemetry.io/docs/specs/semconv/attributes/cicd/
  */
 export type PipelineRunState = 'pending' | 'executing' | 'finalizing';
+export type PipelineResult = 'success' | 'failure' | 'cancellation' | 'error' | 'skip' | 'timeout';
 export type TaskType = 'build' | 'test' | 'deploy' | 'lint' | 'notify' | 'other';
 /**
  * Pipeline-level attributes following OTel conventions
@@ -28,6 +29,8 @@ export interface PipelineAttributes {
     'cicd.pipeline.trigger.ref': string;
     /** The commit SHA that triggered the pipeline (cicd.pipeline.trigger.sha) */
     'cicd.pipeline.trigger.sha': string;
+    /** The result of the pipeline run (cicd.pipeline.result) - conditionally required */
+    'cicd.pipeline.result'?: PipelineResult;
 }
 /**
  * Task (Job) attributes following OTel conventions
@@ -90,6 +93,15 @@ export interface CICDMetrics {
     'cicd.pipeline.task.failure_count': number;
     /** Number of skipped tasks */
     'cicd.pipeline.task.skipped_count': number;
+    /** Number of cancelled tasks */
+    'cicd.pipeline.task.cancelled_count': number;
+    /** Number of tasks in progress */
+    'cicd.pipeline.task.in_progress_count': number;
+    /** Error types encountered (for cicd.pipeline.run.errors metric) */
+    'cicd.pipeline.run.errors': Array<{
+        'error.type': string;
+        count: number;
+    }>;
     /** Individual task metrics */
     tasks: TaskMetrics[];
     /** Timestamp when metrics were collected */

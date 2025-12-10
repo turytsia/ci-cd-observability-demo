@@ -74,17 +74,6 @@ jobs:
           print(json.dumps(manifest, indent=2))
           "
 
-      # Observability for build job
-      - name: 📊 CI/CD Observability
-        uses: ./action
-        if: always()
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          collect-job-metrics: true
-          collect-test-results: false
-          collect-coverage: false
-          artifact-name: 'build-observability-report'
-
   deploy:
     name: 🚀 Deploy
     runs-on: ubuntu-latest

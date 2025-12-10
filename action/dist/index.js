@@ -30113,6 +30113,55 @@ async function collectMetrics(token) {
     });
     const jobs = jobsResponse.jobs;
     const run = workflowRun;
+    // Convert jobs to task metrics
+    const tasks = jobs.map((job) => convertJob(job, run.html_url));
+    // Calculate task counts by status
+    const successCount = tasks.filter((t) => t.status === 'success').length;
+    const failureCount = tasks.filter((t) => t.status === 'failure').length;
+    const skippedCount = tasks.filter((t) => t.status === 'skipped').length;
+    const cancelledCount = tasks.filter((t) => t.status === 'cancelled').length;
+    const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length;
+    // Determine pipeline result (OTel: cicd.pipeline.result)
+    const determinePipelineResult = () => {
+        if (run.status !== 'completed') {
+            return undefined; // Result not yet determined
+        }
+        switch (run.conclusion) {
+            case 'success':
+                return 'success';
+            case 'failure':
+                return 'failure';
+            case 'cancelled':
+                return 'cancellation';
+            case 'timed_out':
+                return 'timeout';
+            case 'skipped':
+                return 'skip';
+            case 'action_required':
+            case 'neutral':
+            case 'stale':
+            default:
+                return run.conclusion ? 'error' : undefined;
+        }
+    };
+    // Collect error types for failed tasks (OTel: cicd.pipeline.run.errors)
+    const collectErrors = () => {
+        const errorMap = new Map();
+        for (const task of tasks) {
+            if (task.status === 'failure') {
+                // Classify error by task type
+                const errorType = `${task.attributes['cicd.pipeline.task.type']}_failure`;
+                errorMap.set(errorType, (errorMap.get(errorType) || 0) + 1);
+            }
+            if (task.status === 'cancelled') {
+                errorMap.set('cancellation', (errorMap.get('cancellation') || 0) + 1);
+            }
+        }
+        return Array.from(errorMap.entries()).map(([type, count]) => ({
+            'error.type': type,
+            count,
+        }));
+    };
     // Build pipeline attributes
     const pipelineAttributes = {
         'cicd.pipeline.name': run.name || github.context.workflow,
@@ -30124,6 +30173,7 @@ async function collectMetrics(token) {
         'cicd.pipeline.trigger.event': run.event,
         'cicd.pipeline.trigger.ref': run.head_branch || github.context.ref,
         'cicd.pipeline.trigger.sha': run.head_sha,
+        'cicd.pipeline.result': determinePipelineResult(),
     };
     // Build worker attributes from current runner
     const workerAttributes = {
@@ -30131,12 +30181,6 @@ async function collectMetrics(token) {
         'cicd.worker.os': process.env.RUNNER_OS?.toLowerCase(),
         'cicd.worker.arch': process.env.RUNNER_ARCH?.toLowerCase(),
     };
-    // Convert jobs to task metrics
-    const tasks = jobs.map((job) => convertJob(job, run.html_url));
-    // Calculate task counts
-    const successCount = tasks.filter((t) => t.status === 'success').length;
-    const failureCount = tasks.filter((t) => t.status === 'failure').length;
-    const skippedCount = tasks.filter((t) => t.status === 'skipped').length;
     // Calculate pipeline duration
     const pipelineDuration = calculateDuration(run.run_started_at, run.updated_at);
     // Calculate queue time (time between creation and start)
@@ -30150,6 +30194,9 @@ async function collectMetrics(token) {
         'cicd.pipeline.task.success_count': successCount,
         'cicd.pipeline.task.failure_count': failureCount,
         'cicd.pipeline.task.skipped_count': skippedCount,
+        'cicd.pipeline.task.cancelled_count': cancelledCount,
+        'cicd.pipeline.task.in_progress_count': inProgressCount,
+        'cicd.pipeline.run.errors': collectErrors(),
         tasks,
         collected_at: new Date().toISOString(),
     };
@@ -30682,6 +30729,9 @@ function generateMetricsSummary(metrics) {
     lines.push(`| **Run #** | ${metrics.pipeline['cicd.pipeline.run.number']} |`);
     lines.push(`| **Attempt** | ${metrics.pipeline['cicd.pipeline.run.attempt']} |`);
     lines.push(`| **State** | ${getStatusEmoji(metrics.pipeline['cicd.pipeline.run.state'])} ${metrics.pipeline['cicd.pipeline.run.state']} |`);
+    if (metrics.pipeline['cicd.pipeline.result']) {
+        lines.push(`| **Result** | ${getStatusEmoji(metrics.pipeline['cicd.pipeline.result'])} ${metrics.pipeline['cicd.pipeline.result']} |`);
+    }
     lines.push(`| **Trigger** | ${metrics.pipeline['cicd.pipeline.trigger.event']} |`);
     lines.push(`| **Branch** | \`${metrics.pipeline['cicd.pipeline.trigger.ref']}\` |`);
     lines.push(`| **Commit** | \`${metrics.pipeline['cicd.pipeline.trigger.sha'].substring(0, 7)}\` |`);
@@ -30702,8 +30752,21 @@ function generateMetricsSummary(metrics) {
     lines.push(`| ✅ Success | ${metrics['cicd.pipeline.task.success_count']} |`);
     lines.push(`| ❌ Failed | ${metrics['cicd.pipeline.task.failure_count']} |`);
     lines.push(`| ⏭️ Skipped | ${metrics['cicd.pipeline.task.skipped_count']} |`);
+    lines.push(`| 🚫 Cancelled | ${metrics['cicd.pipeline.task.cancelled_count']} |`);
+    lines.push(`| 🔄 In Progress | ${metrics['cicd.pipeline.task.in_progress_count']} |`);
     lines.push(`| **Total** | ${metrics['cicd.pipeline.task.count']} |`);
     lines.push('');
+    // Error Summary (if any)
+    if (metrics['cicd.pipeline.run.errors'].length > 0) {
+        lines.push('### ⚠️ Errors');
+        lines.push('');
+        lines.push('| Error Type | Count |');
+        lines.push('|------------|-------|');
+        for (const error of metrics['cicd.pipeline.run.errors']) {
+            lines.push(`| ${error['error.type']} | ${error.count} |`);
+        }
+        lines.push('');
+    }
     // Individual Tasks
     if (metrics.tasks.length > 0) {
         lines.push('### 📝 Task Details');

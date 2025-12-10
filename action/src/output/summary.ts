@@ -77,6 +77,9 @@ function generateMetricsSummary(metrics: CICDMetrics): string {
   lines.push(`| **Run #** | ${metrics.pipeline['cicd.pipeline.run.number']} |`);
   lines.push(`| **Attempt** | ${metrics.pipeline['cicd.pipeline.run.attempt']} |`);
   lines.push(`| **State** | ${getStatusEmoji(metrics.pipeline['cicd.pipeline.run.state'])} ${metrics.pipeline['cicd.pipeline.run.state']} |`);
+  if (metrics.pipeline['cicd.pipeline.result']) {
+    lines.push(`| **Result** | ${getStatusEmoji(metrics.pipeline['cicd.pipeline.result'])} ${metrics.pipeline['cicd.pipeline.result']} |`);
+  }
   lines.push(`| **Trigger** | ${metrics.pipeline['cicd.pipeline.trigger.event']} |`);
   lines.push(`| **Branch** | \`${metrics.pipeline['cicd.pipeline.trigger.ref']}\` |`);
   lines.push(`| **Commit** | \`${metrics.pipeline['cicd.pipeline.trigger.sha'].substring(0, 7)}\` |`);
@@ -99,8 +102,22 @@ function generateMetricsSummary(metrics: CICDMetrics): string {
   lines.push(`| ✅ Success | ${metrics['cicd.pipeline.task.success_count']} |`);
   lines.push(`| ❌ Failed | ${metrics['cicd.pipeline.task.failure_count']} |`);
   lines.push(`| ⏭️ Skipped | ${metrics['cicd.pipeline.task.skipped_count']} |`);
+  lines.push(`| 🚫 Cancelled | ${metrics['cicd.pipeline.task.cancelled_count']} |`);
+  lines.push(`| 🔄 In Progress | ${metrics['cicd.pipeline.task.in_progress_count']} |`);
   lines.push(`| **Total** | ${metrics['cicd.pipeline.task.count']} |`);
   lines.push('');
+
+  // Error Summary (if any)
+  if (metrics['cicd.pipeline.run.errors'].length > 0) {
+    lines.push('### ⚠️ Errors');
+    lines.push('');
+    lines.push('| Error Type | Count |');
+    lines.push('|------------|-------|');
+    for (const error of metrics['cicd.pipeline.run.errors']) {
+      lines.push(`| ${error['error.type']} | ${error.count} |`);
+    }
+    lines.push('');
+  }
 
   // Individual Tasks
   if (metrics.tasks.length > 0) {

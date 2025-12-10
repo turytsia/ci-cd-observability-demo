@@ -12,6 +12,18 @@
 export type PipelineRunState = 'pending' | 'executing' | 'finalizing';
 
 // =============================================================================
+// Pipeline Result (OTel: cicd.pipeline.result)
+// =============================================================================
+
+export type PipelineResult = 
+  | 'success'      // Pipeline finished successfully
+  | 'failure'      // Pipeline failed (e.g., compile error, failing test)
+  | 'cancellation' // Pipeline was cancelled by user
+  | 'error'        // Pipeline failed due to CI/CD system error
+  | 'skip'         // Pipeline was skipped (precondition not met)
+  | 'timeout';     // Pipeline timed out
+
+// =============================================================================
 // Task Types (OTel: cicd.pipeline.task.type)
 // =============================================================================
 
@@ -51,6 +63,9 @@ export interface PipelineAttributes {
 
   /** The commit SHA that triggered the pipeline (cicd.pipeline.trigger.sha) */
   'cicd.pipeline.trigger.sha': string;
+
+  /** The result of the pipeline run (cicd.pipeline.result) - conditionally required */
+  'cicd.pipeline.result'?: PipelineResult;
 }
 
 /**
@@ -138,6 +153,18 @@ export interface CICDMetrics {
 
   /** Number of skipped tasks */
   'cicd.pipeline.task.skipped_count': number;
+
+  /** Number of cancelled tasks */
+  'cicd.pipeline.task.cancelled_count': number;
+
+  /** Number of tasks in progress */
+  'cicd.pipeline.task.in_progress_count': number;
+
+  /** Error types encountered (for cicd.pipeline.run.errors metric) */
+  'cicd.pipeline.run.errors': Array<{
+    'error.type': string;
+    count: number;
+  }>;
 
   /** Individual task metrics */
   tasks: TaskMetrics[];

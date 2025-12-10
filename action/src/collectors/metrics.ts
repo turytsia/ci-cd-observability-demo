@@ -18,6 +18,7 @@ import type {
   GitHubStep,
   TaskType,
   PipelineRunState,
+  PipelineResult,
 } from '../types';
 
 /**
@@ -173,6 +174,61 @@ export async function collectMetrics(token: string): Promise<CICDMetrics> {
   const jobs = jobsResponse.jobs as GitHubJob[];
   const run = workflowRun as unknown as GitHubWorkflowRun;
 
+  // Convert jobs to task metrics
+  const tasks = jobs.map((job) => convertJob(job, run.html_url));
+
+  // Calculate task counts by status
+  const successCount = tasks.filter((t) => t.status === 'success').length;
+  const failureCount = tasks.filter((t) => t.status === 'failure').length;
+  const skippedCount = tasks.filter((t) => t.status === 'skipped').length;
+  const cancelledCount = tasks.filter((t) => t.status === 'cancelled').length;
+  const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length;
+
+  // Determine pipeline result (OTel: cicd.pipeline.result)
+  const determinePipelineResult = (): PipelineResult | undefined => {
+    if (run.status !== 'completed') {
+      return undefined; // Result not yet determined
+    }
+    switch (run.conclusion) {
+      case 'success':
+        return 'success';
+      case 'failure':
+        return 'failure';
+      case 'cancelled':
+        return 'cancellation';
+      case 'timed_out':
+        return 'timeout';
+      case 'skipped':
+        return 'skip';
+      case 'action_required':
+      case 'neutral':
+      case 'stale':
+      default:
+        return run.conclusion ? 'error' : undefined;
+    }
+  };
+
+  // Collect error types for failed tasks (OTel: cicd.pipeline.run.errors)
+  const collectErrors = (): Array<{ 'error.type': string; count: number }> => {
+    const errorMap = new Map<string, number>();
+    
+    for (const task of tasks) {
+      if (task.status === 'failure') {
+        // Classify error by task type
+        const errorType = `${task.attributes['cicd.pipeline.task.type']}_failure`;
+        errorMap.set(errorType, (errorMap.get(errorType) || 0) + 1);
+      }
+      if (task.status === 'cancelled') {
+        errorMap.set('cancellation', (errorMap.get('cancellation') || 0) + 1);
+      }
+    }
+
+    return Array.from(errorMap.entries()).map(([type, count]) => ({
+      'error.type': type,
+      count,
+    }));
+  };
+
   // Build pipeline attributes
   const pipelineAttributes: PipelineAttributes = {
     'cicd.pipeline.name': run.name || github.context.workflow,
@@ -184,6 +240,7 @@ export async function collectMetrics(token: string): Promise<CICDMetrics> {
     'cicd.pipeline.trigger.event': run.event,
     'cicd.pipeline.trigger.ref': run.head_branch || github.context.ref,
     'cicd.pipeline.trigger.sha': run.head_sha,
+    'cicd.pipeline.result': determinePipelineResult(),
   };
 
   // Build worker attributes from current runner
@@ -192,14 +249,6 @@ export async function collectMetrics(token: string): Promise<CICDMetrics> {
     'cicd.worker.os': process.env.RUNNER_OS?.toLowerCase(),
     'cicd.worker.arch': process.env.RUNNER_ARCH?.toLowerCase(),
   };
-
-  // Convert jobs to task metrics
-  const tasks = jobs.map((job) => convertJob(job, run.html_url));
-
-  // Calculate task counts
-  const successCount = tasks.filter((t) => t.status === 'success').length;
-  const failureCount = tasks.filter((t) => t.status === 'failure').length;
-  const skippedCount = tasks.filter((t) => t.status === 'skipped').length;
 
   // Calculate pipeline duration
   const pipelineDuration = calculateDuration(run.run_started_at, run.updated_at);
@@ -216,6 +265,9 @@ export async function collectMetrics(token: string): Promise<CICDMetrics> {
     'cicd.pipeline.task.success_count': successCount,
     'cicd.pipeline.task.failure_count': failureCount,
     'cicd.pipeline.task.skipped_count': skippedCount,
+    'cicd.pipeline.task.cancelled_count': cancelledCount,
+    'cicd.pipeline.task.in_progress_count': inProgressCount,
+    'cicd.pipeline.run.errors': collectErrors(),
     tasks,
     collected_at: new Date().toISOString(),
   };
