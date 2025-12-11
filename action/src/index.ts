@@ -8,6 +8,11 @@
 import * as core from '@actions/core';
 import { collectMetrics, collectTraces } from './collectors';
 import { writeSummary, generateBriefSummary, sendWebhook } from './output';
+import {
+  exportTracesToSolarWinds,
+  exportMetricsToSolarWinds,
+  type SolarWindsConfig,
+} from './exporters';
 import type { ActionConfig, ObservabilityData } from './types';
 
 /**
@@ -20,6 +25,8 @@ function getConfig(): ActionConfig {
     webhookSecret: core.getInput('webhook-secret') || undefined,
     collectMetrics: core.getBooleanInput('collect-metrics'),
     collectTraces: core.getBooleanInput('collect-traces'),
+    swoServiceKey: core.getInput('swo-service-key') || undefined,
+    swoCollector: core.getInput('swo-collector') || undefined,
   };
 }
 
@@ -87,6 +94,24 @@ async function run(): Promise<void> {
       const sent = await sendWebhook(observabilityData, config.webhookUrl, config.webhookSecret);
       if (sent) {
         core.info('   ✓ Webhook sent successfully');
+      }
+    }
+
+    // Export to SolarWinds if configured
+    if (config.swoServiceKey && config.swoCollector) {
+      core.info('☀️ Exporting to SolarWinds Observability...');
+      
+      const swoConfig: SolarWindsConfig = {
+        serviceKey: config.swoServiceKey,
+        collector: config.swoCollector,
+      };
+
+      if (traces) {
+        await exportTracesToSolarWinds(traces, swoConfig);
+      }
+      
+      if (metrics) {
+        await exportMetricsToSolarWinds(metrics, swoConfig);
       }
     }
 

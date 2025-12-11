@@ -30,6 +30,15 @@ inputs:
     required: false
     default: 'true'
 
+  # SolarWinds / OTLP Configuration
+  swo-service-key:
+    description: 'SolarWinds APM Service Key (SW_APM_SERVICE_KEY format: token:service-name)'
+    required: false
+
+  swo-collector:
+    description: 'SolarWinds APM Collector endpoint (e.g., apm.collector.na-01.st-ssp.solarwinds.com)'
+    required: false
+
 outputs:
   metrics-json:
     description: 'Collected metrics in JSON format'
