@@ -25,7 +25,6 @@ export interface WorkflowLogs {
   runId: number;
   runAttempt: number;
   jobs: JobLogs[];
-  rawArchive?: Buffer;
 }
 
 /**
@@ -76,6 +75,9 @@ async function extractTextFromZip(buffer: Buffer): Promise<Map<string, string>> 
 
 /**
  * Collects workflow run logs from GitHub Actions API
+ * Note: Logs for the current workflow run may not be fully available
+ * while it's still executing. This function attempts to get logs
+ * for completed jobs.
  */
 export async function collectLogs(token: string): Promise<WorkflowLogs | null> {
   try {
@@ -86,56 +88,68 @@ export async function collectLogs(token: string): Promise<WorkflowLogs | null> {
 
     core.info(`📜 Fetching logs for run ${runId} (attempt ${runAttempt})...`);
 
-    // Get the logs archive URL
-    // The API returns a 302 redirect to the actual download URL
-    const response = await octokit.rest.actions.downloadWorkflowRunLogs({
+    // First, try to get individual job logs for completed jobs
+    // This is more reliable than downloading the full archive during execution
+    const jobsResponse = await octokit.rest.actions.listJobsForWorkflowRun({
       owner,
       repo,
       run_id: runId,
+      filter: 'latest',
     });
 
-    // The response data is the archive content (ArrayBuffer)
-    const archiveBuffer = Buffer.from(response.data as ArrayBuffer);
-    
-    core.info(`   Downloaded ${(archiveBuffer.length / 1024).toFixed(1)} KB of logs`);
+    const completedJobs = jobsResponse.data.jobs.filter(
+      job => job.status === 'completed'
+    );
 
-    // Extract files from zip
-    const files = await extractTextFromZip(archiveBuffer);
-    
-    // Parse job logs from extracted files
-    // GitHub log files are named like: "Job Name/Step Name.txt"
+    core.info(`   Found ${completedJobs.length} completed jobs out of ${jobsResponse.data.jobs.length} total`);
+
+    if (completedJobs.length === 0) {
+      core.info('   No completed jobs yet - logs will be available after jobs finish');
+      return null;
+    }
+
+    // Fetch logs for each completed job
     const jobLogs: JobLogs[] = [];
-    const jobContents = new Map<string, string[]>();
     
-    for (const [fileName, content] of files) {
-      // Extract job name from path (first directory)
-      const parts = fileName.split('/');
-      if (parts.length >= 1) {
-        const jobName = parts[0];
-        if (!jobContents.has(jobName)) {
-          jobContents.set(jobName, []);
-        }
-        jobContents.get(jobName)!.push(`=== ${fileName} ===\n${content}`);
+    for (const job of completedJobs) {
+      try {
+        core.info(`   Fetching logs for job: ${job.name}...`);
+        
+        const logResponse = await octokit.rest.actions.downloadJobLogsForWorkflowRun({
+          owner,
+          repo,
+          job_id: job.id,
+        });
+
+        // The response is the log content as string
+        const logContent = typeof logResponse.data === 'string' 
+          ? logResponse.data 
+          : Buffer.from(logResponse.data as ArrayBuffer).toString('utf8');
+
+        jobLogs.push({
+          jobId: job.id,
+          jobName: job.name,
+          logs: logContent,
+        });
+
+        core.info(`     ✓ Got ${logContent.split('\n').length} lines`);
+      } catch (jobError) {
+        const jobMsg = jobError instanceof Error ? jobError.message : String(jobError);
+        core.warning(`     Failed to get logs for ${job.name}: ${jobMsg}`);
       }
     }
 
-    // Convert to JobLogs array
-    let jobIndex = 0;
-    for (const [jobName, contents] of jobContents) {
-      jobLogs.push({
-        jobId: jobIndex++,
-        jobName,
-        logs: contents.join('\n\n'),
-      });
+    if (jobLogs.length === 0) {
+      core.warning('   Could not retrieve any job logs');
+      return null;
     }
 
-    core.info(`   Extracted logs for ${jobLogs.length} jobs`);
+    core.info(`   ✓ Collected logs for ${jobLogs.length} jobs`);
 
     return {
       runId,
       runAttempt,
       jobs: jobLogs,
-      rawArchive: archiveBuffer,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -147,6 +161,9 @@ export async function collectLogs(token: string): Promise<WorkflowLogs | null> {
     }
     
     core.warning(`Failed to collect logs: ${message}`);
+    if (error instanceof Error && error.stack) {
+      core.debug(error.stack);
+    }
     return null;
   }
 }
