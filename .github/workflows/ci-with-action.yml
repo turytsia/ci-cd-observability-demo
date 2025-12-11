@@ -108,6 +108,6 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           collect-metrics: 'true'
           collect-traces: 'true'
-          # SolarWinds Observability - export metrics and traces via OTLP
+          # SolarWinds Observability - export metrics and traces via OTL
           swo-service-key: ${{ secrets.SW_APM_SERVICE_KEY }}
           swo-collector: 'apm.collector.na-01.st-ssp.solarwinds.com'
