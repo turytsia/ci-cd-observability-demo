@@ -18,6 +18,15 @@ import {
 import type { ActionConfig, ObservabilityData } from './types';
 
 /**
+ * Parse boolean input more flexibly
+ */
+function parseBooleanInput(name: string, defaultValue: boolean = true): boolean {
+  const value = core.getInput(name);
+  if (!value) return defaultValue;
+  return value.toLowerCase() === 'true' || value === '1';
+}
+
+/**
  * Parses action inputs into configuration
  */
 function getConfig(): ActionConfig {
@@ -25,8 +34,8 @@ function getConfig(): ActionConfig {
     token: core.getInput('token', { required: true }),
     webhookUrl: core.getInput('webhook-url') || undefined,
     webhookSecret: core.getInput('webhook-secret') || undefined,
-    collectMetrics: core.getBooleanInput('collect-metrics'),
-    collectTraces: core.getBooleanInput('collect-traces'),
+    collectMetrics: parseBooleanInput('collect-metrics', true),
+    collectTraces: parseBooleanInput('collect-traces', true),
     swoServiceKey: core.getInput('swo-service-key') || undefined,
     swoCollector: core.getInput('swo-collector') || undefined,
   };

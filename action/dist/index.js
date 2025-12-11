@@ -33555,6 +33555,15 @@ const collectors_1 = __nccwpck_require__(5088);
 const output_1 = __nccwpck_require__(4193);
 const exporters_1 = __nccwpck_require__(8630);
 /**
+ * Parse boolean input more flexibly
+ */
+function parseBooleanInput(name, defaultValue = true) {
+    const value = core.getInput(name);
+    if (!value)
+        return defaultValue;
+    return value.toLowerCase() === 'true' || value === '1';
+}
+/**
  * Parses action inputs into configuration
  */
 function getConfig() {
@@ -33562,8 +33571,8 @@ function getConfig() {
         token: core.getInput('token', { required: true }),
         webhookUrl: core.getInput('webhook-url') || undefined,
         webhookSecret: core.getInput('webhook-secret') || undefined,
-        collectMetrics: core.getBooleanInput('collect-metrics'),
-        collectTraces: core.getBooleanInput('collect-traces'),
+        collectMetrics: parseBooleanInput('collect-metrics', true),
+        collectTraces: parseBooleanInput('collect-traces', true),
         swoServiceKey: core.getInput('swo-service-key') || undefined,
         swoCollector: core.getInput('swo-collector') || undefined,
     };
