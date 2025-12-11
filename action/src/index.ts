@@ -5,12 +5,25 @@
  * Collects CI/CD metrics and traces following OpenTelemetry semantic conventions.
  */
 
+// Initialize SolarWinds APM early if configured (before other imports)
+const swoServiceKey = process.env.INPUT_SWO_SERVICE_KEY || process.env['INPUT_SWO-SERVICE-KEY'];
+const swoCollector = process.env.INPUT_SWO_COLLECTOR || process.env['INPUT_SWO-COLLECTOR'];
+
+if (swoServiceKey && swoCollector) {
+  // Set environment variables for solarwinds-apm before it's loaded
+  process.env.SW_APM_SERVICE_KEY = swoServiceKey;
+  process.env.SW_APM_COLLECTOR = swoCollector;
+  process.env.SW_APM_LOG_LEVEL = 'info';
+}
+
 import * as core from '@actions/core';
 import { collectMetrics, collectTraces } from './collectors';
 import { writeSummary, generateBriefSummary, sendWebhook } from './output';
 import {
   exportTracesToSolarWinds,
   exportMetricsToSolarWinds,
+  initializeSolarWinds,
+  flushSolarWinds,
   type SolarWindsConfig,
 } from './exporters';
 import type { ActionConfig, ObservabilityData } from './types';
@@ -43,6 +56,16 @@ async function run(): Promise<void> {
     if (!config.collectMetrics && !config.collectTraces) {
       core.warning('No collectors enabled. Enable at least one of: collect-metrics, collect-traces');
       return;
+    }
+
+    // Initialize SolarWinds if configured (before collecting data)
+    let swoInitialized = false;
+    if (config.swoServiceKey && config.swoCollector) {
+      const swoConfig: SolarWindsConfig = {
+        serviceKey: config.swoServiceKey,
+        collector: config.swoCollector,
+      };
+      swoInitialized = await initializeSolarWinds(swoConfig);
     }
 
     // Collect data
@@ -113,6 +136,9 @@ async function run(): Promise<void> {
       if (metrics) {
         await exportMetricsToSolarWinds(metrics, swoConfig);
       }
+
+      // Flush data to ensure it's sent before action exits
+      await flushSolarWinds();
     }
 
     core.info('');

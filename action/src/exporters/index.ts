@@ -7,5 +7,7 @@
 export {
   exportTracesToSolarWinds,
   exportMetricsToSolarWinds,
+  initializeSolarWinds,
+  flushSolarWinds,
   type SolarWindsConfig,
 } from './solarwinds';

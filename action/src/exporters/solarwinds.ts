@@ -1,31 +1,17 @@
 /**
- * SolarWinds OTLP Exporter
+ * SolarWinds APM Exporter
  *
- * Exports metrics and traces to SolarWinds Observability using OTLP protocol.
+ * Exports traces and metrics to SolarWinds Observability using the solarwinds-apm library.
+ * The library provides OpenTelemetry-based instrumentation and handles protocol translation.
  */
 
 import * as core from '@actions/core';
-import { Resource } from '@opentelemetry/resources';
-import {
-  BasicTracerProvider,
-  BatchSpanProcessor,
-  ReadableSpan,
-} from '@opentelemetry/sdk-trace-base';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
-import {
-  MeterProvider,
-  PeriodicExportingMetricReader,
-} from '@opentelemetry/sdk-metrics';
-import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto';
-import {
-  SpanKind,
-  SpanStatusCode,
-  context,
-  trace,
-  Span as OTelSpan,
-} from '@opentelemetry/api';
+import { trace, context, SpanKind, SpanStatusCode, metrics } from '@opentelemetry/api';
 
 import type { CICDMetrics, CICDTraces, Span } from '../types';
+
+// Dynamically import solarwinds-apm at runtime to avoid bundling issues
+let swoModule: any = null;
 
 /**
  * SolarWinds exporter configuration
@@ -38,69 +24,74 @@ export interface SolarWindsConfig {
 }
 
 /**
- * Parse service key to extract token and service name
+ * Initialize SolarWinds APM by setting environment variables and loading the library
  */
-function parseServiceKey(serviceKey: string): { token: string; serviceName: string } {
-  const parts = serviceKey.split(':');
-  if (parts.length !== 2) {
-    throw new Error('Invalid SW_APM_SERVICE_KEY format. Expected: token:service-name');
+export async function initializeSolarWinds(config: SolarWindsConfig): Promise<boolean> {
+  try {
+    // Set environment variables before importing solarwinds-apm
+    process.env.SW_APM_SERVICE_KEY = config.serviceKey;
+    process.env.SW_APM_COLLECTOR = config.collector;
+    process.env.SW_APM_LOG_LEVEL = 'info';
+
+    core.info(`SolarWinds APM configuration set:`);
+    core.info(`  Collector: ${config.collector}`);
+    core.info(`  Service Key: ${config.serviceKey.split(':')[1] || 'configured'}`);
+
+    // Try to dynamically import solarwinds-apm
+    try {
+      swoModule = await import('solarwinds-apm');
+      
+      // Wait for SolarWinds to be ready
+      if (swoModule.waitUntilReady) {
+        await swoModule.waitUntilReady(10_000);
+        core.info('  ✓ SolarWinds APM initialized and ready');
+      }
+      return true;
+    } catch (importError) {
+      core.warning(`Could not load solarwinds-apm module: ${importError}`);
+      core.info('  Falling back to standard OpenTelemetry API');
+      return false;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    core.warning(`Failed to initialize SolarWinds APM: ${message}`);
+    return false;
   }
-  return {
-    token: parts[0],
-    serviceName: parts[1],
-  };
 }
 
 /**
- * Create OTLP headers for SolarWinds authentication
+ * Force flush any pending telemetry data to SolarWinds
  */
-function createHeaders(token: string): Record<string, string> {
-  return {
-    'Authorization': `Bearer ${token}`,
-  };
+export async function flushSolarWinds(): Promise<void> {
+  try {
+    if (swoModule?.forceFlush) {
+      await swoModule.forceFlush();
+      core.info('  ✓ Flushed telemetry data to SolarWinds');
+    } else {
+      // Fallback: wait a bit for any batched data to be sent
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  } catch (error) {
+    core.warning(`Failed to flush SolarWinds data: ${error}`);
+  }
 }
 
 /**
- * Export traces to SolarWinds
+ * Export traces to SolarWinds using OpenTelemetry API
  */
 export async function exportTracesToSolarWinds(
   traces: CICDTraces,
   config: SolarWindsConfig
 ): Promise<boolean> {
   try {
-    const { token, serviceName } = parseServiceKey(config.serviceKey);
-    const endpoint = `https://${config.collector}:443/v1/traces`;
+    core.info(`Exporting ${traces.spans.length} trace spans to SolarWinds...`);
 
-    core.info(`Exporting traces to SolarWinds: ${config.collector}`);
-    core.info(`Service name: ${serviceName}`);
+    // Get the tracer from the global API
+    // When solarwinds-apm is loaded, it registers itself as the tracer provider
+    const tracer = trace.getTracer('cicd-observability', '1.0.0');
 
-    // Create resource with service info
-    const resource = new Resource({
-      'service.name': serviceName,
-      'service.version': '1.0.0',
-      'deployment.environment': process.env.GITHUB_REF_NAME || 'unknown',
-      'vcs.repository.url.full': `https://github.com/${process.env.GITHUB_REPOSITORY}`,
-    });
-
-    // Create OTLP trace exporter
-    const traceExporter = new OTLPTraceExporter({
-      url: endpoint,
-      headers: createHeaders(token),
-    });
-
-    // Create tracer provider
-    const provider = new BasicTracerProvider({
-      resource,
-    });
-
-    provider.addSpanProcessor(new BatchSpanProcessor(traceExporter));
-    provider.register();
-
-    const tracer = provider.getTracer('cicd-observability', '1.0.0');
-
-    // Convert our spans to OTel spans
-    // We need to recreate the span hierarchy
-    const spanMap = new Map<string, OTelSpan>();
+    // Create a map to track span relationships
+    const spanMap = new Map<string, any>();
 
     // Sort spans by start time to ensure parents are created first
     const sortedSpans = [...traces.spans].sort(
@@ -112,10 +103,19 @@ export async function exportTracesToSolarWinds(
     const rootSpan = tracer.startSpan(rootSpanData.name, {
       kind: mapSpanKind(rootSpanData.kind),
       startTime: new Date(rootSpanData.start_time_unix_nano / 1_000_000),
-      attributes: rootSpanData.attributes,
+      attributes: {
+        ...rootSpanData.attributes,
+        'service.name': 'cicd-observability',
+        'deployment.environment': process.env.GITHUB_REF_NAME || 'production',
+        'vcs.repository.url.full': `https://github.com/${process.env.GITHUB_REPOSITORY}`,
+      },
     });
-
     spanMap.set(rootSpanData.span_id, rootSpan);
+
+    // Set custom transaction name if available
+    if (swoModule?.setTransactionName) {
+      swoModule.setTransactionName(`pipeline:${rootSpanData.attributes['cicd.pipeline.name']}`);
+    }
 
     // Create child spans
     for (const spanData of sortedSpans) {
@@ -165,11 +165,7 @@ export async function exportTracesToSolarWinds(
       }
     }
 
-    // Force flush and shutdown
-    await provider.forceFlush();
-    await provider.shutdown();
-
-    core.info(`✓ Exported ${traces.spans.length} spans to SolarWinds`);
+    core.info(`  ✓ Created ${traces.spans.length} trace spans`);
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -179,129 +175,119 @@ export async function exportTracesToSolarWinds(
 }
 
 /**
- * Export metrics to SolarWinds
+ * Export metrics to SolarWinds using OpenTelemetry API
  */
 export async function exportMetricsToSolarWinds(
-  metrics: CICDMetrics,
+  metricsData: CICDMetrics,
   config: SolarWindsConfig
 ): Promise<boolean> {
   try {
-    const { token, serviceName } = parseServiceKey(config.serviceKey);
-    const endpoint = `https://${config.collector}:443/v1/metrics`;
+    core.info('Exporting metrics to SolarWinds...');
 
-    core.info(`Exporting metrics to SolarWinds: ${config.collector}`);
+    // Get the meter from the global API
+    const meter = metrics.getMeter('cicd-observability', '1.0.0');
 
-    // Create resource with service info
-    const resource = new Resource({
-      'service.name': serviceName,
-      'service.version': '1.0.0',
-      'deployment.environment': process.env.GITHUB_REF_NAME || 'unknown',
-      'vcs.repository.url.full': `https://github.com/${process.env.GITHUB_REPOSITORY}`,
-    });
-
-    // Create OTLP metric exporter
-    const metricExporter = new OTLPMetricExporter({
-      url: endpoint,
-      headers: createHeaders(token),
-    });
-
-    // Create meter provider
-    const meterProvider = new MeterProvider({
-      resource,
-      readers: [
-        new PeriodicExportingMetricReader({
-          exporter: metricExporter,
-          exportIntervalMillis: 1000, // Export immediately
-        }),
-      ],
-    });
-
-    const meter = meterProvider.getMeter('cicd-observability', '1.0.0');
+    const pipelineAttributes = {
+      'cicd.pipeline.name': metricsData.pipeline['cicd.pipeline.name'],
+      'cicd.pipeline.run.id': String(metricsData.pipeline['cicd.pipeline.run.id']),
+      'service.name': 'cicd-observability',
+      'deployment.environment': process.env.GITHUB_REF_NAME || 'production',
+    };
 
     // Record pipeline duration as histogram
     const pipelineDuration = meter.createHistogram('cicd.pipeline.run.duration', {
-      description: 'Duration of pipeline run',
+      description: 'Duration of pipeline run in seconds',
       unit: 's',
     });
 
-    if (metrics['cicd.pipeline.run.duration_ms']) {
-      pipelineDuration.record(metrics['cicd.pipeline.run.duration_ms'] / 1000, {
-        'cicd.pipeline.name': metrics.pipeline['cicd.pipeline.name'],
-        'cicd.pipeline.run.state': metrics.pipeline['cicd.pipeline.run.state'],
-        'cicd.pipeline.result': metrics.pipeline['cicd.pipeline.result'] || 'unknown',
-      });
+    if (metricsData['cicd.pipeline.run.duration_ms']) {
+      pipelineDuration.record(
+        metricsData['cicd.pipeline.run.duration_ms'] / 1000,
+        {
+          ...pipelineAttributes,
+          'cicd.pipeline.run.state': metricsData.pipeline['cicd.pipeline.run.state'],
+          'cicd.pipeline.result': metricsData.pipeline['cicd.pipeline.result'] || 'unknown',
+        }
+      );
     }
 
-    // Record task counts
-    const taskCounter = meter.createCounter('cicd.pipeline.tasks', {
-      description: 'Count of pipeline tasks by status',
+    // Record total task count
+    const taskCountGauge = meter.createUpDownCounter('cicd.pipeline.task.count', {
+      description: 'Total number of tasks in the pipeline',
       unit: '{task}',
     });
+    taskCountGauge.add(metricsData['cicd.pipeline.task.count'], pipelineAttributes);
 
-    taskCounter.add(metrics['cicd.pipeline.task.success_count'], {
-      'cicd.pipeline.name': metrics.pipeline['cicd.pipeline.name'],
-      status: 'success',
+    // Record task counts by status
+    const taskSuccessGauge = meter.createUpDownCounter('cicd.pipeline.task.success_count', {
+      description: 'Number of successful tasks',
+      unit: '{task}',
     });
-    taskCounter.add(metrics['cicd.pipeline.task.failure_count'], {
-      'cicd.pipeline.name': metrics.pipeline['cicd.pipeline.name'],
-      status: 'failure',
+    taskSuccessGauge.add(metricsData['cicd.pipeline.task.success_count'], pipelineAttributes);
+
+    const taskFailureGauge = meter.createUpDownCounter('cicd.pipeline.task.failure_count', {
+      description: 'Number of failed tasks',
+      unit: '{task}',
     });
-    taskCounter.add(metrics['cicd.pipeline.task.skipped_count'], {
-      'cicd.pipeline.name': metrics.pipeline['cicd.pipeline.name'],
-      status: 'skipped',
+    taskFailureGauge.add(metricsData['cicd.pipeline.task.failure_count'], pipelineAttributes);
+
+    const taskSkippedGauge = meter.createUpDownCounter('cicd.pipeline.task.skipped_count', {
+      description: 'Number of skipped tasks',
+      unit: '{task}',
     });
-    taskCounter.add(metrics['cicd.pipeline.task.cancelled_count'], {
-      'cicd.pipeline.name': metrics.pipeline['cicd.pipeline.name'],
-      status: 'cancelled',
+    taskSkippedGauge.add(metricsData['cicd.pipeline.task.skipped_count'], pipelineAttributes);
+
+    const taskCancelledGauge = meter.createUpDownCounter('cicd.pipeline.task.cancelled_count', {
+      description: 'Number of cancelled tasks',
+      unit: '{task}',
     });
+    taskCancelledGauge.add(metricsData['cicd.pipeline.task.cancelled_count'], pipelineAttributes);
 
     // Record errors
-    if (metrics['cicd.pipeline.run.errors'].length > 0) {
+    if (metricsData['cicd.pipeline.run.errors'].length > 0) {
       const errorCounter = meter.createCounter('cicd.pipeline.run.errors', {
         description: 'Count of pipeline errors by type',
         unit: '{error}',
       });
 
-      for (const error of metrics['cicd.pipeline.run.errors']) {
+      for (const error of metricsData['cicd.pipeline.run.errors']) {
         errorCounter.add(error.count, {
-          'cicd.pipeline.name': metrics.pipeline['cicd.pipeline.name'],
+          ...pipelineAttributes,
           'error.type': error['error.type'],
         });
       }
     }
 
     // Record queue time
-    if (metrics['cicd.pipeline.run.queue_time_ms']) {
+    if (metricsData['cicd.pipeline.run.queue_time_ms']) {
       const queueTime = meter.createHistogram('cicd.pipeline.run.queue_time', {
         description: 'Queue time before pipeline started',
         unit: 's',
       });
-      queueTime.record(metrics['cicd.pipeline.run.queue_time_ms'] / 1000, {
-        'cicd.pipeline.name': metrics.pipeline['cicd.pipeline.name'],
-      });
+      queueTime.record(
+        metricsData['cicd.pipeline.run.queue_time_ms'] / 1000,
+        pipelineAttributes
+      );
     }
 
     // Record individual task durations
-    for (const task of metrics.tasks) {
+    const taskDuration = meter.createHistogram('cicd.pipeline.task.duration', {
+      description: 'Duration of individual tasks',
+      unit: 's',
+    });
+
+    for (const task of metricsData.tasks) {
       if (task.duration_ms) {
-        const taskDuration = meter.createHistogram('cicd.pipeline.task.duration', {
-          description: 'Duration of individual tasks',
-          unit: 's',
-        });
         taskDuration.record(task.duration_ms / 1000, {
-          'cicd.pipeline.name': metrics.pipeline['cicd.pipeline.name'],
+          ...pipelineAttributes,
           'cicd.pipeline.task.name': task.attributes['cicd.pipeline.task.name'],
           'cicd.pipeline.task.type': task.attributes['cicd.pipeline.task.type'],
-          status: task.status,
+          'cicd.pipeline.task.run.state': task.status,
         });
       }
     }
 
-    // Force flush and shutdown
-    await meterProvider.forceFlush();
-    await meterProvider.shutdown();
-
-    core.info('✓ Exported metrics to SolarWinds');
+    core.info(`  ✓ Recorded ${metricsData.tasks.length + 5} metrics`);
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
