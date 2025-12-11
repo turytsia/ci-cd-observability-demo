@@ -42,48 +42,13 @@ inputs:
 outputs:
   metrics-json:
     description: 'Collected metrics in JSON format'
-    value: ${{ steps.observability.outputs.metrics-json }}
   
   traces-json:
     description: 'Collected traces in JSON format'
-    value: ${{ steps.observability.outputs.traces-json }}
   
   summary:
     description: 'Brief summary of the observability data'
-    value: ${{ steps.observability.outputs.summary }}
 
 runs:
-  using: 'composite'
-  steps:
-    - name: Setup SolarWinds APM
-      if: ${{ inputs.swo-service-key != '' }}
-      shell: bash
-      working-directory: ${{ github.action_path }}
-      run: |
-        echo "Installing solarwinds-apm for telemetry export..."
-        npm install --no-save solarwinds-apm @opentelemetry/api@^1.9.0 2>/dev/null || true
-
-    - name: Run CI/CD Observability
-      id: observability
-      shell: bash
-      working-directory: ${{ github.action_path }}
-      env:
-        INPUT_TOKEN: ${{ inputs.token }}
-        INPUT_WEBHOOK-URL: ${{ inputs.webhook-url }}
-        INPUT_WEBHOOK-SECRET: ${{ inputs.webhook-secret }}
-        INPUT_COLLECT-METRICS: ${{ inputs.collect-metrics }}
-        INPUT_COLLECT-TRACES: ${{ inputs.collect-traces }}
-        INPUT_SWO-SERVICE-KEY: ${{ inputs.swo-service-key }}
-        INPUT_SWO-COLLECTOR: ${{ inputs.swo-collector }}
-        # SolarWinds APM environment variables
-        SW_APM_SERVICE_KEY: ${{ inputs.swo-service-key }}
-        SW_APM_COLLECTOR: ${{ inputs.swo-collector }}
-        SW_APM_LOG_LEVEL: info
-        GITHUB_TOKEN: ${{ inputs.token }}
-      run: |
-        if [ -n "$SW_APM_SERVICE_KEY" ]; then
-          echo "Running with SolarWinds APM instrumentation..."
-          node --import solarwinds-apm dist/index.js
-        else
-          node dist/index.js
-        fi
+  using: 'node20'
+  main: 'dist/index.js'
