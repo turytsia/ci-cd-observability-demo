@@ -3,6 +3,7 @@
     "version": "1.0.0",
     "description": "GitHub Action for CI/CD observability with OpenTelemetry semantic conventions",
     "main": "dist/index.js",
+    "type": "module",
     "scripts": {
         "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
         "typecheck": "tsc --noEmit",
@@ -27,13 +28,8 @@
     "dependencies": {
         "@actions/core": "^1.10.1",
         "@actions/github": "^6.0.0",
-        "@opentelemetry/api": "^1.7.0",
-        "@opentelemetry/sdk-trace-base": "^1.21.0",
-        "@opentelemetry/sdk-metrics": "^1.21.0",
-        "@opentelemetry/exporter-trace-otlp-proto": "^0.48.0",
-        "@opentelemetry/exporter-metrics-otlp-proto": "^0.48.0",
-        "@opentelemetry/resources": "^1.21.0",
-        "@opentelemetry/semantic-conventions": "^1.21.0"
+        "@opentelemetry/api": "^1.9.0",
+        "solarwinds-apm": "^16.0.0"
     },
     "devDependencies": {
         "@types/node": "^20.10.0",

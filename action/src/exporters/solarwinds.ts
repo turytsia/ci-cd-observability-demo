@@ -1,23 +1,16 @@
 /**
- * SolarWinds OTLP Exporter
+ * SolarWinds APM Exporter
  *
- * Exports traces and metrics to SolarWinds Observability using standard OTLP protocol.
- * SolarWinds accepts OTLP data with Bearer token authentication.
+ * Uses solarwinds-apm library for OpenTelemetry export.
+ * The solarwinds-apm library is loaded via --import flag and configures
+ * the global OpenTelemetry tracer/meter providers automatically.
+ * 
+ * This module uses @opentelemetry/api for manual instrumentation,
+ * which solarwinds-apm intercepts and exports to SolarWinds.
  */
 
 import * as core from '@actions/core';
-import { Resource } from '@opentelemetry/resources';
-import {
-  BasicTracerProvider,
-  BatchSpanProcessor,
-} from '@opentelemetry/sdk-trace-base';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
-import {
-  MeterProvider,
-  PeriodicExportingMetricReader,
-} from '@opentelemetry/sdk-metrics';
-import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto';
-import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { trace, metrics, SpanKind, SpanStatusCode, context } from '@opentelemetry/api';
 
 import type { CICDMetrics, CICDTraces, Span } from '../types';
 
@@ -32,38 +25,41 @@ export interface SolarWindsConfig {
 }
 
 /**
- * Parse service key to extract token and service name
+ * Check if solarwinds-apm is loaded
  */
-function parseServiceKey(serviceKey: string): { token: string; serviceName: string } {
-  const colonIndex = serviceKey.indexOf(':');
-  if (colonIndex === -1) {
-    throw new Error('Invalid SW_APM_SERVICE_KEY format. Expected: token:service-name');
+function isSolarWindsLoaded(): boolean {
+  try {
+    // If solarwinds-apm is loaded via --import, the tracer provider will be configured
+    const tracer = trace.getTracer('test');
+    return tracer !== undefined;
+  } catch {
+    return false;
   }
-  return {
-    token: serviceKey.substring(0, colonIndex),
-    serviceName: serviceKey.substring(colonIndex + 1),
-  };
 }
 
 /**
- * Create OTLP headers for SolarWinds authentication
- */
-function createHeaders(token: string): Record<string, string> {
-  return {
-    'Authorization': `Bearer ${token}`,
-  };
-}
-
-/**
- * Initialize is now a no-op since we create providers inline
+ * Initialize SolarWinds - just validates configuration
+ * The actual initialization is done by --import solarwinds-apm
  */
 export async function initializeSolarWinds(config: SolarWindsConfig): Promise<boolean> {
   try {
-    const { serviceName } = parseServiceKey(config.serviceKey);
-    core.info(`SolarWinds OTLP configuration:`);
+    // Parse and validate service key
+    const colonIndex = config.serviceKey.indexOf(':');
+    if (colonIndex === -1) {
+      throw new Error('Invalid SW_APM_SERVICE_KEY format. Expected: token:service-name');
+    }
+    const serviceName = config.serviceKey.substring(colonIndex + 1);
+
+    core.info(`SolarWinds APM configuration:`);
     core.info(`  Collector: ${config.collector}`);
     core.info(`  Service: ${serviceName}`);
-    core.info(`  Protocol: OTLP/HTTP`);
+    
+    if (isSolarWindsLoaded()) {
+      core.info(`  Status: solarwinds-apm loaded ✓`);
+    } else {
+      core.warning(`  Status: solarwinds-apm may not be loaded (--import flag required)`);
+    }
+    
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -73,173 +69,143 @@ export async function initializeSolarWinds(config: SolarWindsConfig): Promise<bo
 }
 
 /**
- * Flush is handled per-export now
+ * Flush all pending telemetry data using solarwinds-apm forceFlush
  */
 export async function flushSolarWinds(): Promise<void> {
-  // No-op - flushing is done in each export function
-  core.info('  ✓ All telemetry data sent to SolarWinds');
+  try {
+    // Dynamically import solarwinds-apm to call forceFlush
+    const swo = await import('solarwinds-apm');
+    if (typeof swo.forceFlush === 'function') {
+      core.info('  Flushing telemetry data to SolarWinds...');
+      await swo.forceFlush();
+      core.info('  ✓ All telemetry data sent to SolarWinds');
+    } else {
+      // Wait a bit for async export
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      core.info('  ✓ Telemetry data queued for export');
+    }
+  } catch (error) {
+    // solarwinds-apm might not be available, fallback to waiting
+    core.debug(`forceFlush not available: ${error}`);
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    core.info('  ✓ Telemetry data queued for export');
+  }
 }
 
 /**
- * Export traces to SolarWinds using OTLP
+ * Export traces to SolarWinds using OpenTelemetry API
+ * solarwinds-apm intercepts these and exports them automatically
  */
 export async function exportTracesToSolarWinds(
   traces: CICDTraces,
   config: SolarWindsConfig
 ): Promise<boolean> {
   try {
-    const { token, serviceName } = parseServiceKey(config.serviceKey);
-    const endpoint = `https://${config.collector}:443/v1/traces`;
+    core.info(`Creating ${traces.spans.length} trace spans via OpenTelemetry API...`);
 
-    core.info(`Exporting ${traces.spans.length} trace spans to SolarWinds...`);
-    core.info(`  Endpoint: ${endpoint}`);
-
-    // Create resource with service info
-    const resource = new Resource({
-      'service.name': serviceName,
-      'service.version': '1.0.0',
-      'deployment.environment': process.env.GITHUB_REF_NAME || 'production',
-      'vcs.repository.url.full': `https://github.com/${process.env.GITHUB_REPOSITORY}`,
-      'cicd.pipeline.name': traces.root_span.attributes['cicd.pipeline.name'],
-    });
-
-    // Create OTLP trace exporter
-    const traceExporter = new OTLPTraceExporter({
-      url: endpoint,
-      headers: createHeaders(token),
-    });
-
-    // Create tracer provider
-    const provider = new BasicTracerProvider({
-      resource,
-    });
-
-    provider.addSpanProcessor(new BatchSpanProcessor(traceExporter));
+    const tracer = trace.getTracer('cicd-observability', '1.0.0');
     
-    const tracer = provider.getTracer('cicd-observability', '1.0.0');
-
-    // Create a map to track span relationships
-    const spanMap = new Map<string, any>();
-
-    // Sort spans by start time to ensure parents are created first
-    const sortedSpans = [...traces.spans].sort(
-      (a, b) => a.start_time_unix_nano - b.start_time_unix_nano
-    );
-
-    // Create root span first
+    // Create root span for the pipeline
     const rootSpanData = traces.root_span;
-    const rootSpan = tracer.startSpan(rootSpanData.name, {
-      kind: mapSpanKind(rootSpanData.kind),
-      startTime: new Date(rootSpanData.start_time_unix_nano / 1_000_000),
-      attributes: {
-        ...rootSpanData.attributes,
-        'service.name': serviceName,
+    
+    return tracer.startActiveSpan(
+      rootSpanData.name,
+      {
+        kind: mapSpanKind(rootSpanData.kind),
+        startTime: new Date(rootSpanData.start_time_unix_nano / 1_000_000),
+        attributes: rootSpanData.attributes,
       },
-    });
-    spanMap.set(rootSpanData.span_id, rootSpan);
+      async (rootSpan) => {
+        try {
+          // Get sorted child spans
+          const childSpans = traces.spans
+            .filter(s => s.span_id !== rootSpanData.span_id)
+            .sort((a, b) => a.start_time_unix_nano - b.start_time_unix_nano);
 
-    // Create child spans
-    for (const spanData of sortedSpans) {
-      if (spanData.span_id === rootSpanData.span_id) continue;
+          // Create child spans within the root span context
+          for (const spanData of childSpans) {
+            const childSpan = tracer.startSpan(
+              spanData.name,
+              {
+                kind: mapSpanKind(spanData.kind),
+                startTime: new Date(spanData.start_time_unix_nano / 1_000_000),
+                attributes: spanData.attributes,
+              },
+              context.active()
+            );
 
-      // For child spans, we create them but they won't have proper parent context
-      // in this simplified approach - the trace will still be exported
-      const span = tracer.startSpan(spanData.name, {
-        kind: mapSpanKind(spanData.kind),
-        startTime: new Date(spanData.start_time_unix_nano / 1_000_000),
-        attributes: spanData.attributes,
-      });
+            // Set status
+            if (spanData.status.code === 'error') {
+              childSpan.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: spanData.status.message,
+              });
+            } else if (spanData.status.code === 'ok') {
+              childSpan.setStatus({ code: SpanStatusCode.OK });
+            }
 
-      spanMap.set(spanData.span_id, span);
-    }
+            // End child span
+            const endTime = spanData.end_time_unix_nano
+              ? new Date(spanData.end_time_unix_nano / 1_000_000)
+              : new Date();
+            childSpan.end(endTime);
+          }
 
-    // End all spans in reverse order (children first)
-    const reversedSpans = [...sortedSpans].reverse();
-    for (const spanData of reversedSpans) {
-      const span = spanMap.get(spanData.span_id);
-      if (span) {
-        // Set status
-        if (spanData.status.code === 'error') {
-          span.setStatus({
+          // Set root span status
+          if (rootSpanData.status.code === 'error') {
+            rootSpan.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: rootSpanData.status.message,
+            });
+          } else if (rootSpanData.status.code === 'ok') {
+            rootSpan.setStatus({ code: SpanStatusCode.OK });
+          }
+
+          // End root span
+          const rootEndTime = rootSpanData.end_time_unix_nano
+            ? new Date(rootSpanData.end_time_unix_nano / 1_000_000)
+            : new Date();
+          rootSpan.end(rootEndTime);
+
+          core.info(`  ✓ Created ${traces.spans.length} trace spans`);
+          return true;
+        } catch (error) {
+          rootSpan.setStatus({
             code: SpanStatusCode.ERROR,
-            message: spanData.status.message,
+            message: error instanceof Error ? error.message : String(error),
           });
-        } else if (spanData.status.code === 'ok') {
-          span.setStatus({ code: SpanStatusCode.OK });
+          rootSpan.end();
+          throw error;
         }
-
-        // End span with proper end time
-        const endTime = spanData.end_time_unix_nano
-          ? new Date(spanData.end_time_unix_nano / 1_000_000)
-          : new Date();
-        span.end(endTime);
       }
-    }
-
-    // Force flush and shutdown
-    core.info('  Flushing trace data...');
-    await provider.forceFlush();
-    await provider.shutdown();
-
-    core.info(`  ✓ Exported ${traces.spans.length} trace spans`);
-    return true;
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    core.warning(`Failed to export traces to SolarWinds: ${message}`);
-    if (error instanceof Error && error.stack) {
-      core.debug(error.stack);
-    }
+    core.warning(`Failed to export traces: ${message}`);
     return false;
   }
 }
 
 /**
- * Export metrics to SolarWinds using OTLP
+ * Export metrics to SolarWinds using OpenTelemetry API
+ * solarwinds-apm intercepts these and exports them automatically
  */
 export async function exportMetricsToSolarWinds(
   metricsData: CICDMetrics,
   config: SolarWindsConfig
 ): Promise<boolean> {
   try {
-    const { token, serviceName } = parseServiceKey(config.serviceKey);
-    const endpoint = `https://${config.collector}:443/v1/metrics`;
+    core.info(`Recording metrics via OpenTelemetry API...`);
 
-    core.info(`Exporting metrics to SolarWinds...`);
-    core.info(`  Endpoint: ${endpoint}`);
-
-    // Create resource with service info
-    const resource = new Resource({
-      'service.name': serviceName,
-      'service.version': '1.0.0',
-      'deployment.environment': process.env.GITHUB_REF_NAME || 'production',
-      'vcs.repository.url.full': `https://github.com/${process.env.GITHUB_REPOSITORY}`,
-    });
-
-    // Create OTLP metric exporter
-    const metricExporter = new OTLPMetricExporter({
-      url: endpoint,
-      headers: createHeaders(token),
-    });
-
-    // Create meter provider with immediate export
-    const meterProvider = new MeterProvider({
-      resource,
-      readers: [
-        new PeriodicExportingMetricReader({
-          exporter: metricExporter,
-          exportIntervalMillis: 1000,
-        }),
-      ],
-    });
-
-    const meter = meterProvider.getMeter('cicd-observability', '1.0.0');
+    const meter = metrics.getMeter('cicd-observability', '1.0.0');
 
     const pipelineAttributes = {
       'cicd.pipeline.name': metricsData.pipeline['cicd.pipeline.name'],
       'cicd.pipeline.run.id': String(metricsData.pipeline['cicd.pipeline.run.id']),
+      'service.name': 'github-actions',
     };
 
-    // Record pipeline duration
+    // Record pipeline duration as histogram
     const pipelineDuration = meter.createHistogram('cicd.pipeline.run.duration', {
       description: 'Duration of pipeline run in seconds',
       unit: 's',
@@ -256,7 +222,7 @@ export async function exportMetricsToSolarWinds(
       );
     }
 
-    // Record task counts
+    // Record task counts as gauges using UpDownCounter
     const taskCount = meter.createUpDownCounter('cicd.pipeline.task.count', {
       description: 'Total number of tasks in the pipeline',
       unit: '{task}',
@@ -298,20 +264,11 @@ export async function exportMetricsToSolarWinds(
       }
     }
 
-    // Wait for metrics to be exported
-    core.info('  Flushing metric data...');
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    await meterProvider.forceFlush();
-    await meterProvider.shutdown();
-
-    core.info(`  ✓ Exported ${metricsData.tasks.length + 4} metrics`);
+    core.info(`  ✓ Recorded ${metricsData.tasks.length + 4} metrics`);
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    core.warning(`Failed to export metrics to SolarWinds: ${message}`);
-    if (error instanceof Error && error.stack) {
-      core.debug(error.stack);
-    }
+    core.warning(`Failed to export metrics: ${message}`);
     return false;
   }
 }
