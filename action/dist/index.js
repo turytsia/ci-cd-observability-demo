@@ -33225,6 +33225,9 @@ Object.defineProperty(exports, "flushSolarWinds", ({ enumerable: true, get: func
  *
  * Exports traces and metrics to SolarWinds Observability using the solarwinds-apm library.
  * The library provides OpenTelemetry-based instrumentation and handles protocol translation.
+ *
+ * When SolarWinds APM is enabled, the action.yml loads it via `--import solarwinds-apm`
+ * which registers it as the global OpenTelemetry tracer/meter provider.
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -33266,39 +33269,43 @@ exports.exportTracesToSolarWinds = exportTracesToSolarWinds;
 exports.exportMetricsToSolarWinds = exportMetricsToSolarWinds;
 const core = __importStar(__nccwpck_require__(7484));
 const api_1 = __nccwpck_require__(3914);
-// Dynamically import solarwinds-apm at runtime to avoid bundling issues
-let swoModule = null;
 /**
- * Initialize SolarWinds APM by setting environment variables and loading the library
+ * Check if SolarWinds APM is available and initialized
+ * The module is loaded via --import flag in action.yml
  */
 async function initializeSolarWinds(config) {
     try {
-        // Set environment variables before importing solarwinds-apm
-        process.env.SW_APM_SERVICE_KEY = config.serviceKey;
-        process.env.SW_APM_COLLECTOR = config.collector;
-        process.env.SW_APM_LOG_LEVEL = 'info';
-        core.info(`SolarWinds APM configuration set:`);
+        core.info(`SolarWinds APM configuration:`);
         core.info(`  Collector: ${config.collector}`);
-        core.info(`  Service Key: ${config.serviceKey.split(':')[1] || 'configured'}`);
-        // Try to dynamically import solarwinds-apm
-        try {
-            swoModule = await Promise.resolve().then(() => __importStar(__nccwpck_require__(9516)));
+        core.info(`  Service: ${config.serviceKey.split(':')[1] || 'configured'}`);
+        // Check if solarwinds-apm was loaded via --import
+        // It registers itself in the global symbol registry
+        const swoModule = global[Symbol.for('solarwinds-apm')];
+        if (swoModule) {
             // Wait for SolarWinds to be ready
             if (swoModule.waitUntilReady) {
                 await swoModule.waitUntilReady(10_000);
-                core.info('  ✓ SolarWinds APM initialized and ready');
+                core.info('  ✓ SolarWinds APM is ready');
             }
             return true;
         }
-        catch (importError) {
-            core.warning(`Could not load solarwinds-apm module: ${importError}`);
-            core.info('  Falling back to standard OpenTelemetry API');
+        // Try dynamic import as fallback
+        try {
+            const swo = await Promise.resolve().then(() => __importStar(__nccwpck_require__(9516)));
+            if (swo.waitUntilReady) {
+                await swo.waitUntilReady(10_000);
+                core.info('  ✓ SolarWinds APM initialized');
+            }
+            return true;
+        }
+        catch {
+            core.info('  ⚠ SolarWinds APM not available, using standard OTel API');
             return false;
         }
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        core.warning(`Failed to initialize SolarWinds APM: ${message}`);
+        core.warning(`SolarWinds APM check failed: ${message}`);
         return false;
     }
 }
@@ -33307,14 +33314,28 @@ async function initializeSolarWinds(config) {
  */
 async function flushSolarWinds() {
     try {
+        // Try to get the module from global symbol
+        const swoModule = global[Symbol.for('solarwinds-apm')];
         if (swoModule?.forceFlush) {
             await swoModule.forceFlush();
             core.info('  ✓ Flushed telemetry data to SolarWinds');
+            return;
         }
-        else {
-            // Fallback: wait a bit for any batched data to be sent
-            await new Promise((resolve) => setTimeout(resolve, 3000));
+        // Try dynamic import
+        try {
+            const swo = await Promise.resolve().then(() => __importStar(__nccwpck_require__(9516)));
+            if (swo.forceFlush) {
+                await swo.forceFlush();
+                core.info('  ✓ Flushed telemetry data to SolarWinds');
+                return;
+            }
         }
+        catch {
+            // Module not available
+        }
+        // Fallback: wait for batched data to be sent
+        core.info('  Waiting for telemetry data to be sent...');
+        await new Promise((resolve) => setTimeout(resolve, 5000));
     }
     catch (error) {
         core.warning(`Failed to flush SolarWinds data: ${error}`);
@@ -33346,9 +33367,15 @@ async function exportTracesToSolarWinds(traces, config) {
             },
         });
         spanMap.set(rootSpanData.span_id, rootSpan);
-        // Set custom transaction name if available
-        if (swoModule?.setTransactionName) {
-            swoModule.setTransactionName(`pipeline:${rootSpanData.attributes['cicd.pipeline.name']}`);
+        // Set custom transaction name if SolarWinds APM is available
+        try {
+            const swo = global[Symbol.for('solarwinds-apm')];
+            if (swo?.setTransactionName) {
+                swo.setTransactionName(`pipeline:${rootSpanData.attributes['cicd.pipeline.name']}`);
+            }
+        }
+        catch {
+            // SolarWinds APM not available
         }
         // Create child spans
         for (const spanData of sortedSpans) {

@@ -3,15 +3,15 @@
  *
  * Exports traces and metrics to SolarWinds Observability using the solarwinds-apm library.
  * The library provides OpenTelemetry-based instrumentation and handles protocol translation.
+ * 
+ * When SolarWinds APM is enabled, the action.yml loads it via `--import solarwinds-apm`
+ * which registers it as the global OpenTelemetry tracer/meter provider.
  */
 
 import * as core from '@actions/core';
 import { trace, context, SpanKind, SpanStatusCode, metrics } from '@opentelemetry/api';
 
 import type { CICDMetrics, CICDTraces, Span } from '../types';
-
-// Dynamically import solarwinds-apm at runtime to avoid bundling issues
-let swoModule: any = null;
 
 /**
  * SolarWinds exporter configuration
@@ -24,37 +24,43 @@ export interface SolarWindsConfig {
 }
 
 /**
- * Initialize SolarWinds APM by setting environment variables and loading the library
+ * Check if SolarWinds APM is available and initialized
+ * The module is loaded via --import flag in action.yml
  */
 export async function initializeSolarWinds(config: SolarWindsConfig): Promise<boolean> {
   try {
-    // Set environment variables before importing solarwinds-apm
-    process.env.SW_APM_SERVICE_KEY = config.serviceKey;
-    process.env.SW_APM_COLLECTOR = config.collector;
-    process.env.SW_APM_LOG_LEVEL = 'info';
-
-    core.info(`SolarWinds APM configuration set:`);
+    core.info(`SolarWinds APM configuration:`);
     core.info(`  Collector: ${config.collector}`);
-    core.info(`  Service Key: ${config.serviceKey.split(':')[1] || 'configured'}`);
+    core.info(`  Service: ${config.serviceKey.split(':')[1] || 'configured'}`);
 
-    // Try to dynamically import solarwinds-apm
-    try {
-      swoModule = await import('solarwinds-apm');
-      
+    // Check if solarwinds-apm was loaded via --import
+    // It registers itself in the global symbol registry
+    const swoModule = (global as any)[Symbol.for('solarwinds-apm')];
+    
+    if (swoModule) {
       // Wait for SolarWinds to be ready
       if (swoModule.waitUntilReady) {
         await swoModule.waitUntilReady(10_000);
-        core.info('  ✓ SolarWinds APM initialized and ready');
+        core.info('  ✓ SolarWinds APM is ready');
       }
       return true;
-    } catch (importError) {
-      core.warning(`Could not load solarwinds-apm module: ${importError}`);
-      core.info('  Falling back to standard OpenTelemetry API');
+    }
+    
+    // Try dynamic import as fallback
+    try {
+      const swo = await import('solarwinds-apm');
+      if (swo.waitUntilReady) {
+        await swo.waitUntilReady(10_000);
+        core.info('  ✓ SolarWinds APM initialized');
+      }
+      return true;
+    } catch {
+      core.info('  ⚠ SolarWinds APM not available, using standard OTel API');
       return false;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    core.warning(`Failed to initialize SolarWinds APM: ${message}`);
+    core.warning(`SolarWinds APM check failed: ${message}`);
     return false;
   }
 }
@@ -64,13 +70,30 @@ export async function initializeSolarWinds(config: SolarWindsConfig): Promise<bo
  */
 export async function flushSolarWinds(): Promise<void> {
   try {
+    // Try to get the module from global symbol
+    const swoModule = (global as any)[Symbol.for('solarwinds-apm')];
+    
     if (swoModule?.forceFlush) {
       await swoModule.forceFlush();
       core.info('  ✓ Flushed telemetry data to SolarWinds');
-    } else {
-      // Fallback: wait a bit for any batched data to be sent
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      return;
     }
+    
+    // Try dynamic import
+    try {
+      const swo = await import('solarwinds-apm');
+      if (swo.forceFlush) {
+        await swo.forceFlush();
+        core.info('  ✓ Flushed telemetry data to SolarWinds');
+        return;
+      }
+    } catch {
+      // Module not available
+    }
+    
+    // Fallback: wait for batched data to be sent
+    core.info('  Waiting for telemetry data to be sent...');
+    await new Promise((resolve) => setTimeout(resolve, 5000));
   } catch (error) {
     core.warning(`Failed to flush SolarWinds data: ${error}`);
   }
@@ -112,9 +135,14 @@ export async function exportTracesToSolarWinds(
     });
     spanMap.set(rootSpanData.span_id, rootSpan);
 
-    // Set custom transaction name if available
-    if (swoModule?.setTransactionName) {
-      swoModule.setTransactionName(`pipeline:${rootSpanData.attributes['cicd.pipeline.name']}`);
+    // Set custom transaction name if SolarWinds APM is available
+    try {
+      const swo = (global as any)[Symbol.for('solarwinds-apm')];
+      if (swo?.setTransactionName) {
+        swo.setTransactionName(`pipeline:${rootSpanData.attributes['cicd.pipeline.name']}`);
+      }
+    } catch {
+      // SolarWinds APM not available
     }
 
     // Create child spans
