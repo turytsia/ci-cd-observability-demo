@@ -30,6 +30,11 @@ inputs:
     required: false
     default: 'true'
 
+  collect-logs:
+    description: 'Enable workflow logs collection and display in job summary'
+    required: false
+    default: 'false'
+
   # SolarWinds / OTLP Configuration
   swo-service-key:
     description: 'SolarWinds APM Service Key (SW_APM_SERVICE_KEY format: token:service-name)'
@@ -48,6 +53,10 @@ outputs:
   traces-json:
     description: 'Collected traces in JSON format'
     value: ${{ steps.run.outputs.traces-json }}
+
+  logs-json:
+    description: 'Collected logs metadata in JSON format'
+    value: ${{ steps.run.outputs.logs-json }}
   
   summary:
     description: 'Brief summary of the observability data'
@@ -77,6 +86,7 @@ runs:
         INPUT_WEBHOOK_SECRET: ${{ inputs.webhook-secret }}
         INPUT_COLLECT_METRICS: ${{ inputs.collect-metrics }}
         INPUT_COLLECT_TRACES: ${{ inputs.collect-traces }}
+        INPUT_COLLECT_LOGS: ${{ inputs.collect-logs }}
         INPUT_SWO_SERVICE_KEY: ${{ inputs.swo-service-key }}
         INPUT_SWO_COLLECTOR: ${{ inputs.swo-collector }}
         # SolarWinds APM environment variables

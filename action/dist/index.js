@@ -32659,11 +32659,223 @@ function wrappy (fn, cb) {
  * Re-exports all collectors for convenient importing
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.collectTraces = exports.collectMetrics = void 0;
+exports.getJobLogs = exports.formatLogsForSummary = exports.collectLogs = exports.collectTraces = exports.collectMetrics = void 0;
 var metrics_1 = __nccwpck_require__(9941);
 Object.defineProperty(exports, "collectMetrics", ({ enumerable: true, get: function () { return metrics_1.collectMetrics; } }));
 var traces_1 = __nccwpck_require__(5496);
 Object.defineProperty(exports, "collectTraces", ({ enumerable: true, get: function () { return traces_1.collectTraces; } }));
+var logs_1 = __nccwpck_require__(7233);
+Object.defineProperty(exports, "collectLogs", ({ enumerable: true, get: function () { return logs_1.collectLogs; } }));
+Object.defineProperty(exports, "formatLogsForSummary", ({ enumerable: true, get: function () { return logs_1.formatLogsForSummary; } }));
+Object.defineProperty(exports, "getJobLogs", ({ enumerable: true, get: function () { return logs_1.getJobLogs; } }));
+
+
+/***/ }),
+
+/***/ 7233:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Logs Collector
+ *
+ * Retrieves workflow run logs from the GitHub Actions API.
+ * Downloads and extracts the logs archive for analysis.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.collectLogs = collectLogs;
+exports.formatLogsForSummary = formatLogsForSummary;
+exports.getJobLogs = getJobLogs;
+const core = __importStar(__nccwpck_require__(7484));
+const github = __importStar(__nccwpck_require__(3228));
+/**
+ * Extracts text content from a zip archive buffer
+ * Simple implementation that parses zip file structure
+ */
+async function extractTextFromZip(buffer) {
+    const files = new Map();
+    // ZIP file structure:
+    // Local file header signature = 0x04034b50 (PK\x03\x04)
+    let offset = 0;
+    while (offset < buffer.length - 4) {
+        // Check for local file header signature
+        const signature = buffer.readUInt32LE(offset);
+        if (signature !== 0x04034b50) {
+            // Not a local file header, might be central directory
+            break;
+        }
+        // Parse local file header
+        const compressionMethod = buffer.readUInt16LE(offset + 8);
+        const compressedSize = buffer.readUInt32LE(offset + 18);
+        const uncompressedSize = buffer.readUInt32LE(offset + 22);
+        const fileNameLength = buffer.readUInt16LE(offset + 26);
+        const extraFieldLength = buffer.readUInt16LE(offset + 28);
+        const fileNameStart = offset + 30;
+        const fileName = buffer.toString('utf8', fileNameStart, fileNameStart + fileNameLength);
+        const dataStart = fileNameStart + fileNameLength + extraFieldLength;
+        const dataEnd = dataStart + compressedSize;
+        // Only handle uncompressed (stored) files for simplicity
+        // GitHub logs are typically stored uncompressed in the zip
+        if (compressionMethod === 0 && !fileName.endsWith('/')) {
+            const content = buffer.toString('utf8', dataStart, dataEnd);
+            files.set(fileName, content);
+        }
+        offset = dataEnd;
+    }
+    return files;
+}
+/**
+ * Collects workflow run logs from GitHub Actions API
+ */
+async function collectLogs(token) {
+    try {
+        const octokit = github.getOctokit(token);
+        const { owner, repo } = github.context.repo;
+        const runId = github.context.runId;
+        const runAttempt = parseInt(process.env.GITHUB_RUN_ATTEMPT || '1', 10);
+        core.info(`📜 Fetching logs for run ${runId} (attempt ${runAttempt})...`);
+        // Get the logs archive URL
+        // The API returns a 302 redirect to the actual download URL
+        const response = await octokit.rest.actions.downloadWorkflowRunLogs({
+            owner,
+            repo,
+            run_id: runId,
+        });
+        // The response data is the archive content (ArrayBuffer)
+        const archiveBuffer = Buffer.from(response.data);
+        core.info(`   Downloaded ${(archiveBuffer.length / 1024).toFixed(1)} KB of logs`);
+        // Extract files from zip
+        const files = await extractTextFromZip(archiveBuffer);
+        // Parse job logs from extracted files
+        // GitHub log files are named like: "Job Name/Step Name.txt"
+        const jobLogs = [];
+        const jobContents = new Map();
+        for (const [fileName, content] of files) {
+            // Extract job name from path (first directory)
+            const parts = fileName.split('/');
+            if (parts.length >= 1) {
+                const jobName = parts[0];
+                if (!jobContents.has(jobName)) {
+                    jobContents.set(jobName, []);
+                }
+                jobContents.get(jobName).push(`=== ${fileName} ===\n${content}`);
+            }
+        }
+        // Convert to JobLogs array
+        let jobIndex = 0;
+        for (const [jobName, contents] of jobContents) {
+            jobLogs.push({
+                jobId: jobIndex++,
+                jobName,
+                logs: contents.join('\n\n'),
+            });
+        }
+        core.info(`   Extracted logs for ${jobLogs.length} jobs`);
+        return {
+            runId,
+            runAttempt,
+            jobs: jobLogs,
+            rawArchive: archiveBuffer,
+        };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Check if it's a 404 - logs might not be available yet
+        if (message.includes('404') || message.includes('Not Found')) {
+            core.warning('Logs not available yet (workflow still running or logs expired)');
+            return null;
+        }
+        core.warning(`Failed to collect logs: ${message}`);
+        return null;
+    }
+}
+/**
+ * Formats logs for display in GitHub Job Summary
+ */
+function formatLogsForSummary(logs, maxLinesPerJob = 100) {
+    const lines = [];
+    lines.push(`## 📜 Workflow Run Logs`);
+    lines.push('');
+    lines.push(`**Run ID:** ${logs.runId} | **Attempt:** ${logs.runAttempt}`);
+    lines.push('');
+    for (const job of logs.jobs) {
+        lines.push(`### ${job.jobName}`);
+        lines.push('');
+        lines.push('<details>');
+        lines.push(`<summary>View logs (${job.logs.split('\n').length} lines)</summary>`);
+        lines.push('');
+        lines.push('```');
+        // Truncate if too long
+        const logLines = job.logs.split('\n');
+        if (logLines.length > maxLinesPerJob) {
+            lines.push(logLines.slice(0, maxLinesPerJob).join('\n'));
+            lines.push(`\n... (truncated ${logLines.length - maxLinesPerJob} lines)`);
+        }
+        else {
+            lines.push(job.logs);
+        }
+        lines.push('```');
+        lines.push('');
+        lines.push('</details>');
+        lines.push('');
+    }
+    return lines.join('\n');
+}
+/**
+ * Gets logs for a specific job by ID
+ */
+async function getJobLogs(token, jobId) {
+    try {
+        const octokit = github.getOctokit(token);
+        const { owner, repo } = github.context.repo;
+        const response = await octokit.rest.actions.downloadJobLogsForWorkflowRun({
+            owner,
+            repo,
+            job_id: jobId,
+        });
+        // Response is the log content as string (redirected download)
+        return response.data;
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        core.warning(`Failed to get job logs: ${message}`);
+        return null;
+    }
+}
 
 
 /***/ }),
@@ -33573,6 +33785,7 @@ function getConfig() {
         webhookSecret: core.getInput('webhook-secret') || undefined,
         collectMetrics: parseBooleanInput('collect-metrics', true),
         collectTraces: parseBooleanInput('collect-traces', true),
+        collectLogs: parseBooleanInput('collect-logs', false),
         swoServiceKey: core.getInput('swo-service-key') || undefined,
         swoCollector: core.getInput('swo-collector') || undefined,
     };
@@ -33585,8 +33798,8 @@ async function run() {
         core.info('🔭 Starting CI/CD Observability Collection');
         const config = getConfig();
         // Validate at least one collector is enabled
-        if (!config.collectMetrics && !config.collectTraces) {
-            core.warning('No collectors enabled. Enable at least one of: collect-metrics, collect-traces');
+        if (!config.collectMetrics && !config.collectTraces && !config.collectLogs) {
+            core.warning('No collectors enabled. Enable at least one of: collect-metrics, collect-traces, collect-logs');
             return;
         }
         // Initialize SolarWinds if configured (before collecting data)
@@ -33601,6 +33814,7 @@ async function run() {
         // Collect data
         let metrics = null;
         let traces = null;
+        let logs = null;
         if (config.collectMetrics) {
             core.info('📊 Collecting metrics...');
             metrics = await (0, collectors_1.collectMetrics)(config.token);
@@ -33610,6 +33824,13 @@ async function run() {
             core.info('🔍 Collecting traces...');
             traces = await (0, collectors_1.collectTraces)(config.token);
             core.info(`   ✓ Collected ${traces.spans.length} spans`);
+        }
+        if (config.collectLogs) {
+            core.info('📜 Collecting logs...');
+            logs = await (0, collectors_1.collectLogs)(config.token);
+            if (logs) {
+                core.info(`   ✓ Collected logs for ${logs.jobs.length} jobs`);
+            }
         }
         // Build observability data output
         const observabilityData = {
@@ -33629,11 +33850,25 @@ async function run() {
         if (traces) {
             core.setOutput('traces-json', JSON.stringify(traces));
         }
+        if (logs) {
+            core.setOutput('logs-json', JSON.stringify({
+                runId: logs.runId,
+                runAttempt: logs.runAttempt,
+                jobCount: logs.jobs.length,
+                jobs: logs.jobs.map(j => ({ jobId: j.jobId, jobName: j.jobName, logLines: j.logs.split('\n').length })),
+            }));
+        }
         const briefSummary = (0, output_1.generateBriefSummary)(metrics, traces);
         core.setOutput('summary', briefSummary);
         // Write to GitHub job summary
         core.info('📝 Writing job summary...');
         await (0, output_1.writeSummary)(metrics, traces);
+        // Write logs to job summary if collected
+        if (logs) {
+            core.info('📜 Writing logs to job summary...');
+            const logsSummary = (0, collectors_1.formatLogsForSummary)(logs, 50);
+            await core.summary.addRaw(logsSummary).write();
+        }
         // Send to webhook if configured
         if (config.webhookUrl) {
             core.info('📤 Sending to webhook...');

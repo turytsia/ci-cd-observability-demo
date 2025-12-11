@@ -379,6 +379,9 @@ export interface ActionConfig {
   /** Enable traces collection */
   collectTraces: boolean;
 
+  /** Enable logs collection */
+  collectLogs: boolean;
+
   /** SolarWinds APM Service Key */
   swoServiceKey?: string;
 

@@ -259,6 +259,8 @@ export interface ActionConfig {
     collectMetrics: boolean;
     /** Enable traces collection */
     collectTraces: boolean;
+    /** Enable logs collection */
+    collectLogs: boolean;
     /** SolarWinds APM Service Key */
     swoServiceKey?: string;
     /** SolarWinds APM Collector endpoint */

@@ -6,7 +6,7 @@
  */
 
 import * as core from '@actions/core';
-import { collectMetrics, collectTraces } from './collectors';
+import { collectMetrics, collectTraces, collectLogs, formatLogsForSummary } from './collectors';
 import { writeSummary, generateBriefSummary, sendWebhook } from './output';
 import {
   exportTracesToSolarWinds,
@@ -36,6 +36,7 @@ function getConfig(): ActionConfig {
     webhookSecret: core.getInput('webhook-secret') || undefined,
     collectMetrics: parseBooleanInput('collect-metrics', true),
     collectTraces: parseBooleanInput('collect-traces', true),
+    collectLogs: parseBooleanInput('collect-logs', false),
     swoServiceKey: core.getInput('swo-service-key') || undefined,
     swoCollector: core.getInput('swo-collector') || undefined,
   };
@@ -51,8 +52,8 @@ async function run(): Promise<void> {
     const config = getConfig();
 
     // Validate at least one collector is enabled
-    if (!config.collectMetrics && !config.collectTraces) {
-      core.warning('No collectors enabled. Enable at least one of: collect-metrics, collect-traces');
+    if (!config.collectMetrics && !config.collectTraces && !config.collectLogs) {
+      core.warning('No collectors enabled. Enable at least one of: collect-metrics, collect-traces, collect-logs');
       return;
     }
 
@@ -69,6 +70,7 @@ async function run(): Promise<void> {
     // Collect data
     let metrics = null;
     let traces = null;
+    let logs = null;
 
     if (config.collectMetrics) {
       core.info('📊 Collecting metrics...');
@@ -80,6 +82,14 @@ async function run(): Promise<void> {
       core.info('🔍 Collecting traces...');
       traces = await collectTraces(config.token);
       core.info(`   ✓ Collected ${traces.spans.length} spans`);
+    }
+
+    if (config.collectLogs) {
+      core.info('📜 Collecting logs...');
+      logs = await collectLogs(config.token);
+      if (logs) {
+        core.info(`   ✓ Collected logs for ${logs.jobs.length} jobs`);
+      }
     }
 
     // Build observability data output
@@ -101,6 +111,14 @@ async function run(): Promise<void> {
     if (traces) {
       core.setOutput('traces-json', JSON.stringify(traces));
     }
+    if (logs) {
+      core.setOutput('logs-json', JSON.stringify({
+        runId: logs.runId,
+        runAttempt: logs.runAttempt,
+        jobCount: logs.jobs.length,
+        jobs: logs.jobs.map(j => ({ jobId: j.jobId, jobName: j.jobName, logLines: j.logs.split('\n').length })),
+      }));
+    }
 
     const briefSummary = generateBriefSummary(metrics, traces);
     core.setOutput('summary', briefSummary);
@@ -108,6 +126,13 @@ async function run(): Promise<void> {
     // Write to GitHub job summary
     core.info('📝 Writing job summary...');
     await writeSummary(metrics, traces);
+
+    // Write logs to job summary if collected
+    if (logs) {
+      core.info('📜 Writing logs to job summary...');
+      const logsSummary = formatLogsForSummary(logs, 50);
+      await core.summary.addRaw(logsSummary).write();
+    }
 
     // Send to webhook if configured
     if (config.webhookUrl) {
