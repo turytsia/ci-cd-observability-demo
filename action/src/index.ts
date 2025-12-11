@@ -86,9 +86,15 @@ async function run(): Promise<void> {
 
     if (config.collectLogs) {
       core.info('📜 Collecting logs...');
-      logs = await collectLogs(config.token);
-      if (logs) {
-        core.info(`   ✓ Collected logs for ${logs.jobs.length} jobs`);
+      try {
+        logs = await collectLogs(config.token);
+        if (logs) {
+          core.info(`   ✓ Collected logs for ${logs.jobs.length} jobs`);
+        } else {
+          core.info('   ⚠️ No logs returned (jobs may still be running)');
+        }
+      } catch (logError) {
+        core.warning(`   Failed to collect logs: ${logError instanceof Error ? logError.message : String(logError)}`);
       }
     }
 
